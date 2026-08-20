@@ -39,6 +39,30 @@ not a whole fleet.
 string-pulled against line-of-sight. Robots are never snapped to it. This
 matters — Mikkel pushed back hard on anything that reads as a grid.
 
+## Rendering gotchas found the hard way
+
+- **The floor bake needs mipmaps.** It is ~3700 px across and gets minified
+  hard at anything but close zoom. Without them it aliases into a shimmering
+  diagonal moire that reads as dirt across the whole hall. `createTextureFromSource`
+  takes `{ mipmap: true }`.
+- **Never use `fract(sin(dot(p, k)) * large)` as a hash.** It loses precision
+  and lays a visible diagonal weave over the frame — worst at night where the
+  film grain is heaviest. The composite now uses an integer-style hash.
+- **Soft ellipses do not make a floor.** Several hundred stacked at low alpha
+  read as leopard print, not concrete. Broad tonal variation comes from a
+  low-frequency value-noise field (`paintTonalField`); ellipses are only for
+  small, definite things like oil and standing water.
+- **Watch for amplitude dying through a chain of multiplies.** The water chop
+  was passing through four separate dampings and arriving at a few percent of
+  brightness, which is why the pool read as a flat gradient.
+- **Domain-warp the long wavelengths only.** Warping the short chop as well
+  curls the ripple lines into marbled smoke; ripple has to stay directional to
+  read as a water surface.
+- **Weight a wave spectrum towards SHORT wavelengths.** Loaded towards long
+  ones there is no detail at working zoom. `waveAt` fades each wave out as its
+  wavelength approaches pixel size, so short ripples can be used freely without
+  aliasing when the camera pulls back.
+
 ## Things tried and rejected
 
 - **Staggered boarding jetties.** The two quay fingers were at different x

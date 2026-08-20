@@ -102,7 +102,10 @@ export class Renderer {
         `floor bake ${floorCanvas.width}x${floorCanvas.height} exceeds GPU limit ${maxTex}`,
       );
     }
-    this.floorTexture = createTextureFromSource(gl, floorCanvas, { filter: gl.LINEAR });
+    // Mipmaps matter enormously here: the bake is ~3700 px across and gets
+    // minified hard at anything but close zoom. Without them it aliases into a
+    // shimmering moire weave that reads as dirt on the floor.
+    this.floorTexture = createTextureFromSource(gl, floorCanvas, { mipmap: true });
     this.atlasTexture = createTextureFromSource(gl, buildAtlas(seed), { filter: gl.LINEAR });
 
     this.floorBatch = new SpriteBatch(gl, 4);
@@ -142,7 +145,7 @@ export class Renderer {
     const gl = this.gl;
     gl.deleteTexture(this.floorTexture);
     this.floorTexture = createTextureFromSource(
-      gl, bakeFloor(this.seed, this.bays, { grime }), { filter: gl.LINEAR },
+      gl, bakeFloor(this.seed, this.bays, { grime }), { mipmap: true },
     );
   }
 

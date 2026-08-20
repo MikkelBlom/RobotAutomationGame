@@ -31,9 +31,9 @@ import {
  * daylight is applied.
  */
 const PALETTE = {
-  concrete: '#5e615f',
-  concreteLight: '#6e716e',
-  concreteDark: '#4a4d4c',
+  concrete: '#55584f',
+  concreteLight: '#666a60',
+  concreteDark: '#42453e',
   joint: '#3a3d3d',
   grime: '#35383a',
   oil: '#202224',
@@ -47,11 +47,11 @@ const PALETTE = {
   curbLight: '#6a706f',
   rust: '#7a4520',
   rustDeep: '#5c3116',
-  hazardYellow: '#b8932e',
-  hazardDark: '#2e2f2c',
+  hazardYellow: '#8d7530',
+  hazardDark: '#2a2b28',
   gate: '#3a3f43',
-  leveller: '#565e64',
-  trailerFloor: '#6b5637',
+  leveller: '#464d53',
+  trailerFloor: '#5e5138',
   gateDark: '#23272a',
   pit: '#0f141a',
 } as const;
@@ -220,10 +220,10 @@ function paintLoadingBays(ctx: CanvasRenderingContext2D, rng: Rng, bays: DockBay
     ctx.lineWidth = 7;
     ctx.strokeRect(x0 + 12, FLOOR.y, bay.width - 24, plateDepth);
     // Chequer plate.
-    ctx.strokeStyle = 'rgba(255,255,255,0.07)';
-    ctx.lineWidth = 5;
+    ctx.strokeStyle = 'rgba(255,255,255,0.13)';
+    ctx.lineWidth = 6;
     ctx.beginPath();
-    for (let d = -bay.width; d < bay.width * 2; d += 34) {
+    for (let d = -bay.width; d < bay.width * 2; d += 40) {
       ctx.moveTo(x0 + d, FLOOR.y);
       ctx.lineTo(x0 + d + plateDepth, FLOOR.y + plateDepth);
       ctx.moveTo(x0 + d + plateDepth, FLOOR.y);
@@ -469,30 +469,19 @@ function paintSlab(ctx: CanvasRenderingContext2D, rng: Rng): void {
   ctx.fillStyle = PALETTE.concrete;
   ctx.fillRect(FLOOR.x, FLOOR.y, FLOOR.w, FLOOR.h);
 
-  // Broad tonal zones so the slab is not flat. Low contrast on purpose —
-  // anything stronger reads as cloud cover rather than worn concrete.
-  for (let i = 0; i < 380; i++) {
-    ctx.globalAlpha = rng.range(0.010, 0.028);
-    ctx.fillStyle = rng.chance(0.5) ? PALETTE.concreteLight : PALETTE.concreteDark;
-    ctx.beginPath();
-    ctx.ellipse(
-      rng.range(FLOOR.x, FLOOR.x + FLOOR.w),
-      rng.range(FLOOR.y, FLOOR.y + FLOOR.h),
-      rng.range(260, 940),
-      rng.range(190, 640),
-      rng.range(0, TAU),
-      0,
-      TAU,
-    );
-    ctx.fill();
-  }
-  ctx.globalAlpha = 1;
+  // Broad tonal variation from a smooth noise field.
+  //
+  // This used to be several hundred stacked soft ellipses. Overlapping, they
+  // read as leopard print — big grey clouds drifting over the slab — which is
+  // nothing like concrete. A low-frequency field gives the same "not flat"
+  // result without ever resolving into blobs.
+  paintTonalField(ctx, rng, FLOOR.x, FLOOR.y, FLOOR.w, FLOOR.h, 0.16, 26);
 
   // Aggregate grain.
-  const noise = makeConcreteNoise(rng, 256);
+  const noise = makeConcreteNoise(rng, 512);
   const pattern = ctx.createPattern(noise, 'repeat');
   if (pattern) {
-    ctx.globalAlpha = 0.72;
+    ctx.globalAlpha = 0.5;
     ctx.fillStyle = pattern;
     ctx.fillRect(FLOOR.x, FLOOR.y, FLOOR.w, FLOOR.h);
     ctx.globalAlpha = 1;
@@ -561,22 +550,10 @@ function paintGrime(ctx: CanvasRenderingContext2D, rng: Rng): void {
     ctx.fillRect(edges[i][0], edges[i][1], edges[i][2], edges[i][3]);
   }
 
-  // General blotchy filth.
-  for (let i = 0; i < 420; i++) {
-    ctx.globalAlpha = rng.range(0.012, 0.032);
-    ctx.fillStyle = PALETTE.grime;
-    ctx.beginPath();
-    ctx.ellipse(
-      rng.range(FLOOR.x, FLOOR.x + FLOOR.w),
-      rng.range(FLOOR.y, FLOOR.y + FLOOR.h),
-      rng.range(150, 750),
-      rng.range(105, 490),
-      rng.range(0, TAU),
-      0,
-      TAU,
-    );
-    ctx.fill();
-  }
+  // Traffic soiling: darker where robots run, not random blobs. Same field
+  // generator as the slab tone, just tighter and dirtier.
+  paintTonalField(ctx, rng, FLOOR.x, FLOOR.y, FLOOR.w, FLOOR.h, 0.13, 11);
+
   ctx.globalAlpha = 1;
   ctx.restore();
 }
@@ -614,22 +591,15 @@ function paintPuddlesAndOil(ctx: CanvasRenderingContext2D, rng: Rng): void {
   ctx.rect(FLOOR.x, FLOOR.y, FLOOR.w, FLOOR.h);
   ctx.clip();
 
-  for (let i = 0; i < 80; i++) {
+  for (let i = 0; i < 62; i++) {
     const x = rng.range(FLOOR.x + 60, FLOOR.x + FLOOR.w - 60);
     const y = rng.range(FLOOR.y + 60, FLOOR.y + FLOOR.h - 60);
-    const rx = rng.range(90, 320);
+    const rx = rng.range(38, 105);
     const ry = rx * rng.range(0.4, 0.75);
     const rot = rng.range(0, TAU);
 
-    // Damp halo first, tight and faint — a wide soft one reads as fog.
-    ctx.globalAlpha = 0.045;
-    ctx.fillStyle = PALETTE.damp;
-    ctx.beginPath();
-    ctx.ellipse(x, y, rx * 1.22, ry * 1.22, rot, 0, TAU);
-    ctx.fill();
-
     // The standing water itself: small, dark, defined.
-    ctx.globalAlpha = rng.range(0.20, 0.38);
+    ctx.globalAlpha = rng.range(0.26, 0.44);
     ctx.fillStyle = PALETTE.puddle;
     ctx.beginPath();
     ctx.ellipse(x, y, rx, ry, rot, 0, TAU);
@@ -644,12 +614,12 @@ function paintPuddlesAndOil(ctx: CanvasRenderingContext2D, rng: Rng): void {
     ctx.stroke();
   }
 
-  for (let i = 0; i < 70; i++) {
+  for (let i = 0; i < 110; i++) {
     const x = rng.range(FLOOR.x + 40, FLOOR.x + FLOOR.w - 40);
     const y = rng.range(FLOOR.y + 40, FLOOR.y + FLOOR.h - 40);
-    const r = rng.range(70, 280);
-    for (let k = 0; k < rng.int(3, 6); k++) {
-      ctx.globalAlpha = rng.range(0.1, 0.3);
+    const r = rng.range(28, 78);
+    for (let k = 0; k < rng.int(2, 4); k++) {
+      ctx.globalAlpha = rng.range(0.14, 0.34);
       ctx.fillStyle = PALETTE.oil;
       ctx.beginPath();
       ctx.ellipse(
@@ -743,7 +713,7 @@ function paintHazardBand(
   _height: number,
 ): void {
   const BAND = HAZARD_BAND;
-  const stripe = 62;
+  const stripe = 40;
   const pitch = stripe * 2;
   const count = WATER_POLY.length / 2;
 
@@ -869,18 +839,18 @@ function paintHazardBand(
   for (let i = 1; i < count; i++) ctx.lineTo(ox[i], oy[i]);
   ctx.closePath();
   ctx.clip();
-  for (let k = 0; k < 200; k++) {
+  for (let k = 0; k < 620; k++) {
     const i = rng.int(0, count - 1);
     const t = rng.next();
     const j = (i + 1) % count;
     const bx = px(i) + (px(j) - px(i)) * t;
     const by = py(i) + (py(j) - py(i)) * t;
-    ctx.globalAlpha = rng.range(0.07, 0.28);
+    ctx.globalAlpha = rng.range(0.10, 0.40);
     ctx.fillStyle = rng.chance(0.6) ? PALETTE.concrete : PALETTE.grime;
     ctx.beginPath();
     ctx.ellipse(
       bx + nx[i] * rng.range(0, BAND), by + ny[i] * rng.range(0, BAND),
-      rng.range(24, 100), rng.range(16, 54), rng.range(0, TAU), 0, TAU,
+      rng.range(14, 62), rng.range(9, 34), rng.range(0, TAU), 0, TAU,
     );
     ctx.fill();
   }
@@ -1019,4 +989,58 @@ function paintOutsideFog(ctx: CanvasRenderingContext2D): void {
     WALL_THICKNESS / eastDepth,
     FLOOR.x + FLOOR.w, WORLD.y0, eastDepth, WORLD_H,
   );
+}
+
+/**
+ * Smooth large-scale tonal variation, from a value-noise field stretched over
+ * the target area.
+ *
+ * `cells` sets the feature size: low numbers give broad drifts, higher numbers
+ * a tighter mottle. This exists because stacking soft ellipses to fake the same
+ * thing produced overlapping grey clouds that looked nothing like a floor.
+ */
+function paintTonalField(
+  ctx: CanvasRenderingContext2D,
+  rng: Rng,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  strength: number,
+  cells: number,
+): void {
+  const aspect = w / h;
+  const gw = Math.max(4, Math.round(cells * Math.sqrt(aspect)));
+  const gh = Math.max(4, Math.round(cells / Math.sqrt(aspect)));
+
+  const src = document.createElement('canvas');
+  src.width = gw;
+  src.height = gh;
+  const sctx = src.getContext('2d');
+  if (!sctx) return;
+
+  const img = sctx.createImageData(gw, gh);
+  const px = img.data;
+  for (let i = 0; i < gw * gh; i++) {
+    const v = rng.next();
+    // Signed around mid grey: the field both lifts and drops the base tone.
+    const tone = v < 0.5 ? 0 : 255;
+    px[i * 4] = tone;
+    px[i * 4 + 1] = tone;
+    px[i * 4 + 2] = tone;
+    px[i * 4 + 3] = Math.round(Math.abs(v - 0.5) * 2 * 255);
+  }
+  sctx.putImageData(img, 0, 0);
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x, y, w, h);
+  ctx.clip();
+  // Bilinear upscale is what turns the lattice into a smooth field.
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.globalAlpha = strength;
+  ctx.drawImage(src, x, y, w, h);
+  ctx.globalAlpha = 1;
+  ctx.restore();
 }

@@ -86,9 +86,9 @@ export class EntityRenderer {
       if (!visible(bounds, b.x[i], b.y[i], BOT_LENGTH * 2)) continue;
       batch.pushRegion(
         REGIONS.blockShadow,
-        b.x[i] + offX, b.y[i] + offY, b.angle[i],
-        SPRITE_W * 0.88, SPRITE_H * 0.88,
-        0, 0, 0, 0.44 * directional,
+        b.x[i] + offX * 0.8, b.y[i] + offY * 0.8, b.angle[i],
+        SPRITE_W * 0.78, SPRITE_H * 0.78,
+        0, 0, 0, 0.36 * directional,
       );
       // Hard contact shadow, offset so a crescent emerges from under the
       // hull. Centred it would just darken the robot itself.

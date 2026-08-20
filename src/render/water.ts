@@ -16,9 +16,9 @@ const BROAD_RANGE = 2400;
 
 /** Neutral water albedo; time of day arrives via the lighting pass. */
 const COLORS = {
-  deep: [0.078, 0.128, 0.180] as const,
-  shallow: [0.204, 0.310, 0.396] as const,
-  foam: [0.780, 0.831, 0.851] as const,
+  deep: [0.055, 0.098, 0.145] as const,
+  shallow: [0.212, 0.325, 0.412] as const,
+  foam: [0.639, 0.706, 0.741] as const,
   spec: [0.816, 0.882, 0.929] as const,
 };
 

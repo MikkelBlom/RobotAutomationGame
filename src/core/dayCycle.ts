@@ -62,14 +62,14 @@ interface Keyframe {
 const KEYS: Keyframe[] = [
   {
     hour: 0,
-    ambient: '#1b2740', ambientIntensity: 0.20,
+    ambient: '#1b2740', ambientIntensity: 0.27,
     sunColor: '#22304d', sunIntensity: 0.05,
     lampIntensity: 1.0,
     gradeTint: '#2b3a5c', gradeStrength: 0.30, saturation: 0.80, grain: 0.075, vignette: 0.72,
   },
   {
     hour: 4.5,
-    ambient: '#22304c', ambientIntensity: 0.24,
+    ambient: '#22304c', ambientIntensity: 0.30,
     sunColor: '#3a4a6e', sunIntensity: 0.10,
     lampIntensity: 1.0,
     gradeTint: '#2c3d60', gradeStrength: 0.28, saturation: 0.82, grain: 0.070, vignette: 0.70,
@@ -111,21 +111,21 @@ const KEYS: Keyframe[] = [
   },
   {
     hour: 20.2,
-    ambient: '#3b4260', ambientIntensity: 0.30,
+    ambient: '#3b4260', ambientIntensity: 0.36,
     sunColor: '#57608f', sunIntensity: 0.22,
     lampIntensity: 0.85,
     gradeTint: '#3a4570', gradeStrength: 0.30, saturation: 0.86, grain: 0.068, vignette: 0.66,
   },
   {
     hour: 21.8,
-    ambient: '#1e2942', ambientIntensity: 0.21,
+    ambient: '#1e2942', ambientIntensity: 0.28,
     sunColor: '#243050', sunIntensity: 0.06,
     lampIntensity: 1.0,
     gradeTint: '#2b3a5c', gradeStrength: 0.30, saturation: 0.80, grain: 0.075, vignette: 0.72,
   },
   {
     hour: 24,
-    ambient: '#1b2740', ambientIntensity: 0.20,
+    ambient: '#1b2740', ambientIntensity: 0.27,
     sunColor: '#22304d', sunIntensity: 0.05,
     lampIntensity: 1.0,
     gradeTint: '#2b3a5c', gradeStrength: 0.30, saturation: 0.80, grain: 0.075, vignette: 0.72,

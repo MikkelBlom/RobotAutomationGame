@@ -75,12 +75,12 @@ export class LightingPass {
       const d = lamp.radius * 2;
       batch.pushRegion(
         REGIONS.radial, lamp.x, lamp.y, 0, d, d,
-        LAMP_COLOR.r, LAMP_COLOR.g, LAMP_COLOR.b, level * 0.55,
+        LAMP_COLOR.r, LAMP_COLOR.g, LAMP_COLOR.b, level * 1.05,
       );
       // Hot core right under the fitting.
       batch.pushRegion(
-        REGIONS.radial, lamp.x, lamp.y, 0, d * 0.3, d * 0.3,
-        1.0, 0.78, 0.5, level * 0.5,
+        REGIONS.radial, lamp.x, lamp.y, 0, d * 0.34, d * 0.34,
+        1.0, 0.80, 0.54, level * 0.85,
       );
     }
   }
@@ -115,8 +115,8 @@ export class LightingPass {
 
       batch.pushRegion(
         REGIONS.blockShadow, x, y, 0,
-        size * 2.3 * stretch, size * 2.3 * stretch,
-        0, 0, 0, 0.62 * directional,
+        size * 1.7 * stretch, size * 1.7 * stretch,
+        0, 0, 0, 0.5 * directional,
       );
       // Hard contact shadow, pushed just far enough along the light direction
       // that a crescent of it emerges from under the base plate. Centred, it
@@ -124,8 +124,8 @@ export class LightingPass {
       // beneath an object is hidden by that object.
       batch.pushRegion(
         REGIONS.hardShadow,
-        col.x + dirX * size * 0.62, col.y + dirY * size * 0.62, 0,
-        size * 1.55, size * 1.55, 0, 0, 0, 0.72,
+        col.x + dirX * size * 0.80, col.y + dirY * size * 0.80, 0,
+        size * 1.45, size * 1.45, 0, 0, 0, 0.66,
       );
     }
   }
@@ -171,13 +171,13 @@ export class LightingPass {
     for (const prop of this.level.props) {
       if (!visible(bounds, prop.x, prop.y, prop.size * 3)) continue;
       batch.pushRegion(
-        REGIONS.blockShadow, prop.x + throwX, prop.y + throwY, prop.angle,
-        prop.size * 1.5, prop.size * 1.5, 0, 0, 0, 0.55 * directional,
+        REGIONS.blockShadow, prop.x + throwX * 0.7, prop.y + throwY * 0.7, prop.angle,
+        prop.size * 1.22, prop.size * 1.22, 0, 0, 0, 0.42 * directional,
       );
       batch.pushRegion(
         REGIONS.hardShadow,
-        prop.x + dirX * prop.size * 0.44, prop.y + dirY * prop.size * 0.44, prop.angle,
-        prop.size * 1.05, prop.size * 1.05, 0, 0, 0, 0.72,
+        prop.x + dirX * prop.size * 0.62, prop.y + dirY * prop.size * 0.62, prop.angle,
+        prop.size * 0.96, prop.size * 0.96, 0, 0, 0, 0.60,
       );
     }
   }

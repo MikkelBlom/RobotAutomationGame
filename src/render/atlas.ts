@@ -776,14 +776,19 @@ function drawPalletStack(ctx: CanvasRenderingContext2D, rng: ReturnType<typeof m
 function drawHardShadow(ctx: CanvasRenderingContext2D): void {
   const { size } = cell(ctx, 'hardShadow');
   const half = size / 2;
-  const grad = ctx.createRadialGradient(0, 0, half * 0.30, 0, 0, half * 0.86);
-  grad.addColorStop(0.0, 'rgba(0,0,0,0.92)');
-  grad.addColorStop(0.62, 'rgba(0,0,0,0.68)');
-  grad.addColorStop(0.86, 'rgba(0,0,0,0.20)');
-  grad.addColorStop(1.0, 'rgba(0,0,0,0)');
-  ctx.fillStyle = grad;
-  ctx.beginPath();
-  ctx.roundRect(-half * 0.9, -half * 0.9, half * 1.8, half * 1.8, half * 0.3);
-  ctx.fill();
+  // A rounded rectangle with only a short penumbra. Crates and columns are
+  // boxes, so a soft circular blob under one reads as a smudge rather than as
+  // that object's shadow.
+  const steps = 7;
+  for (let i = steps; i >= 0; i--) {
+    const t = i / steps;
+    const r = half * (0.80 + t * 0.20);
+    ctx.globalAlpha = 0.16;
+    ctx.fillStyle = '#000000';
+    ctx.beginPath();
+    ctx.roundRect(-r, -r, r * 2, r * 2, r * 0.20);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
   ctx.restore();
 }

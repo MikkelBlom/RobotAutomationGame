@@ -89,7 +89,7 @@ export const DOCK_MOUTH_X = WORLD.x0;
 export const WATER_BOUNDS = polygonBounds(WATER_POLY);
 
 /** Painted warning band around the dock. */
-export const HAZARD_BAND = 90;
+export const HAZARD_BAND = 62;
 /** Robots are kept this far back from the water's edge. */
 export const WATER_CLEARANCE = 90;
 
