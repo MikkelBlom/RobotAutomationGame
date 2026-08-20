@@ -25,6 +25,7 @@ export class NavGrid {
   private readonly stamp: Int32Array;
   private readonly openHeap: Int32Array;
   private readonly inOpen: Uint8Array;
+  private readonly botRadius: number;
   private searchId = 0;
   private heapSize = 0;
 
@@ -40,7 +41,13 @@ export class NavGrid {
     this.openHeap = new Int32Array(n + 1);
     this.inOpen = new Uint8Array(n);
 
+    this.botRadius = botRadius;
     this.rasterise(columns, props, botRadius);
+  }
+
+  /** Re-rasterises after the world's obstacles change, e.g. a crate lifted. */
+  rebuild(columns: Column[], props: Prop[]): void {
+    this.rasterise(columns, props, this.botRadius);
   }
 
   private rasterise(columns: Column[], props: Prop[], botRadius: number): void {

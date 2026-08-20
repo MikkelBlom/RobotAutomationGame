@@ -10,6 +10,8 @@ export interface Settings {
   water: boolean;
   columns: boolean;
   props: boolean;
+  /** Slab stains, puddles and wear. Off gives a clean slab for level layout. */
+  floorGrime: boolean;
   shadows: boolean;
   grain: boolean;
   vignette: boolean;
@@ -35,6 +37,7 @@ export function defaultSettings(): Settings {
     water: true,
     columns: true,
     props: true,
+    floorGrime: true,
     shadows: true,
     grain: true,
     vignette: true,

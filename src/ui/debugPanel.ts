@@ -120,6 +120,7 @@ export class DebugPanel {
     this.checkbox('water', s.water, (v) => { s.water = v; });
     this.checkbox('columns', s.columns, (v) => { s.columns = v; });
     this.checkbox('cargo', s.props, (v) => { s.props = v; });
+    this.checkbox('floor grime', s.floorGrime, (v) => { s.floorGrime = v; });
     this.checkbox('shadows', s.shadows, (v) => { s.shadows = v; });
     this.checkbox('film grain', s.grain, (v) => { s.grain = v; });
     this.checkbox('vignette', s.vignette, (v) => { s.vignette = v; });

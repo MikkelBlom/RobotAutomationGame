@@ -41,6 +41,21 @@ matters — Mikkel pushed back hard on anything that reads as a grid.
 
 ## Things tried and rejected
 
+- **Staggered boarding jetties.** The two quay fingers were at different x
+  spans, which read as a mistake. They face each other now, leaving a 14 m
+  channel with 40 m of quay down each side — a hull lies along it and crew can
+  step across from either bank. The berth is what sets the basin's dimensions.
+- **A robot sized without reference to its load.** The deck could not actually
+  take a Euro pallet. It is now 240 x 150 cm, derived from the pallet plus
+  handling clearance plus somewhere to stow the arms.
+- **Circle-only collision against cargo.** The nav grid reasons about the
+  robot's centre, so a machine turning on the spot beside a crate swept its nose
+  straight through it. There is now a hull-rectangle-versus-circle push-out per
+  frame, on top of the grid.
+- **Anchoring the selection box in screen space.** Panning with WASD mid-drag
+  dragged the box across the floor with the camera. The anchor is stored in
+  world space, so the first click grounds it and panning extends the box.
+
 - **Contact shadows centred on the object.** In a top-down view a shadow
   directly beneath something is hidden BY that thing, so a centred shadow drawn
   into the light buffer just darkens the object itself — crates got a dark blob

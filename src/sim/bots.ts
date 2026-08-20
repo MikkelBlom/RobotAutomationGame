@@ -1,4 +1,5 @@
 import { angleDelta, clamp, TAU } from '../core/mathUtils';
+import type { Prop } from './level';
 import type { NavGrid } from './navGrid';
 
 /**
@@ -10,14 +11,41 @@ import type { NavGrid } from './navGrid';
  * pointers and feeding the garbage collector.
  */
 
-/** 165 x 105 cm: a real pallet-moving AMR. Its bed takes a 120x80 pallet. */
-export const BOT_LENGTH = 165;
-export const BOT_WIDTH = 105;
+/**
+ * 240 x 150 cm. Sized from its load: the deck has to take a 120 x 80 Euro
+ * pallet with handling clearance, and the loader arms need somewhere to stow.
+ */
+export const BOT_LENGTH = 240;
+export const BOT_WIDTH = 150;
 /** Collision radius — a little tighter than the hull so they can pass closely. */
-/** Collision radius, between half-width and half-length. */
-export const BOT_RADIUS = 58;
+/** Navigation radius, between half-width and half-length. */
+export const BOT_RADIUS = 84;
+/**
+ * Half the hull's longest dimension. Used when pushing out of cargo: the nav
+ * grid only knows about the robot's centre, so a machine turning on the spot
+ * could otherwise sweep its nose through a crate.
+ */
+export const BOT_HALF_LENGTH = BOT_LENGTH / 2;
 
 export const BotState = { Idle: 0, Moving: 1 } as const;
+
+/**
+ * What a robot has been told to do. Fetching runs through its own little
+ * sequence once the robot has arrived, which is what produces the reverse-up,
+ * arms-out, load-on-deck behaviour.
+ */
+export const BotTask = { None: 0, Move: 1, Fetch: 2 } as const;
+
+/** Stages of a fetch, after the drive is done. */
+const Phase = { Driving: 0, Aligning: 1, Reaching: 2, Closing: 3, Stowing: 4 } as const;
+
+/** How long each stage of the grab takes, in seconds. */
+const REACH_TIME = 0.75;
+const CLOSE_TIME = 0.30;
+const STOW_TIME = 0.65;
+
+/** Gap left between the robot's tail and the crate it is collecting. */
+const GRAB_GAP = 26;
 
 /** Waypoints for a robot currently under orders. */
 interface ActivePath {
@@ -44,6 +72,18 @@ export class BotPool {
   readonly phase: Float32Array;
   /** Distance driven, in cm. Drives the track animation frame. */
   readonly odometer: Float32Array;
+  /** Current order type, one of BotTask. */
+  readonly task: Uint8Array;
+  /** Index into the level's prop list while fetching, else -1. */
+  readonly targetProp: Int32Array;
+  /** Stage within a fetch. */
+  readonly taskPhase: Uint8Array;
+  /** Seconds elapsed in the current fetch stage. */
+  readonly phaseTime: Float32Array;
+  /** Loader arm extension, 0 stowed to 1 fully out. */
+  readonly armExtend: Float32Array;
+  /** Prop variant riding on the deck, or -1 when empty. */
+  readonly carrying: Int8Array;
 
   /**
    * Only robots actually under orders carry a path, and you command squads, not
@@ -59,8 +99,12 @@ export class BotPool {
   private readonly queues = new Map<number, number[]>();
 
   // Spatial hash for neighbour lookups during separation.
-  private readonly hashCell = 190;
+  private readonly hashCell = 300;
   private readonly buckets = new Map<number, number[]>();
+
+  // Cargo, hashed the same way so the push-out below stays cheap.
+  private props: readonly Prop[] = [];
+  private readonly propBuckets = new Map<number, number[]>();
 
   constructor(capacity = 4096) {
     this.capacity = capacity;
@@ -76,6 +120,12 @@ export class BotPool {
     this.velocity = new Float32Array(capacity);
     this.phase = new Float32Array(capacity);
     this.odometer = new Float32Array(capacity);
+    this.task = new Uint8Array(capacity);
+    this.targetProp = new Int32Array(capacity);
+    this.taskPhase = new Uint8Array(capacity);
+    this.phaseTime = new Float32Array(capacity);
+    this.armExtend = new Float32Array(capacity);
+    this.carrying = new Int8Array(capacity);
   }
 
   spawn(x: number, y: number, angle = 0): number {
@@ -84,7 +134,7 @@ export class BotPool {
     this.x[i] = x;
     this.y[i] = y;
     this.angle[i] = angle;
-    this.speed[i] = 165;   // 1.65 m/s, typical for a warehouse AMR
+    this.speed[i] = 175;   // 1.65 m/s, typical for a warehouse AMR
     this.turnRate[i] = 1.8;
     this.goalX[i] = x;
     this.goalY[i] = y;
@@ -93,6 +143,12 @@ export class BotPool {
     this.velocity[i] = 0;
     this.phase[i] = (i * 0.618) % 1 * TAU;
     this.odometer[i] = 0;
+    this.task[i] = BotTask.None;
+    this.targetProp[i] = -1;
+    this.taskPhase[i] = Phase.Driving;
+    this.phaseTime[i] = 0;
+    this.armExtend[i] = 0;
+    this.carrying[i] = -1;
     return i;
   }
 
@@ -116,6 +172,16 @@ export class BotPool {
     (this as { velocity: Float32Array }).velocity = copy(this.velocity, (n) => new Float32Array(n));
     (this as { phase: Float32Array }).phase = copy(this.phase, (n) => new Float32Array(n));
     (this as { odometer: Float32Array }).odometer = copy(this.odometer, (n) => new Float32Array(n));
+    (this as { task: Uint8Array }).task = copy(this.task, (n) => new Uint8Array(n));
+    (this as { taskPhase: Uint8Array }).taskPhase = copy(this.taskPhase, (n) => new Uint8Array(n));
+    (this as { phaseTime: Float32Array }).phaseTime = copy(this.phaseTime, (n) => new Float32Array(n));
+    (this as { armExtend: Float32Array }).armExtend = copy(this.armExtend, (n) => new Float32Array(n));
+    const nextCarrying = new Int8Array(next);
+    nextCarrying.set(this.carrying);
+    (this as { carrying: Int8Array }).carrying = nextCarrying;
+    const nextTarget = new Int32Array(next);
+    nextTarget.set(this.targetProp);
+    (this as { targetProp: Int32Array }).targetProp = nextTarget;
     this.capacity = next;
   }
 
@@ -126,6 +192,10 @@ export class BotPool {
   clearOrders(index: number): void {
     this.paths.delete(index);
     this.queues.delete(index);
+    this.task[index] = BotTask.None;
+    this.targetProp[index] = -1;
+    this.taskPhase[index] = Phase.Driving;
+    this.phaseTime[index] = 0;
     this.state[index] = BotState.Idle;
     this.goalX[index] = this.x[index];
     this.goalY[index] = this.y[index];
@@ -157,7 +227,11 @@ export class BotPool {
       return true;
     }
 
-    if (!append) this.queues.delete(index);
+    if (!append) {
+      this.queues.delete(index);
+      this.task[index] = BotTask.Move;
+      this.targetProp[index] = -1;
+    }
     return this.driveTo(index, target.x, target.y, nav);
   }
 
@@ -189,6 +263,56 @@ export class BotPool {
     const ny = queue.shift() as number;
     if (queue.length === 0) this.queues.delete(index);
     return this.driveTo(index, nx, ny, nav);
+  }
+
+  /**
+   * Sends a robot to collect a crate.
+   *
+   * It drives to a standoff point on the side the crate is already nearest to,
+   * then turns so its TAIL faces the load — the deck and the arms are both at
+   * the back, so it has to reverse up to the crate the way a real loader would.
+   */
+  orderFetch(index: number, propIndex: number, prop: Prop, nav: NavGrid): boolean {
+    // Approach from whichever side the robot is already on, so it does not
+    // drive a lap around the crate for no reason.
+    let ax = this.x[index] - prop.x;
+    let ay = this.y[index] - prop.y;
+    const len = Math.hypot(ax, ay);
+    if (len < 1) {
+      ax = 1;
+      ay = 0;
+    } else {
+      ax /= len;
+      ay /= len;
+    }
+
+    const standoff = BOT_HALF_LENGTH + prop.radius + GRAB_GAP;
+    let target = nav.nearestFree(prop.x + ax * standoff, prop.y + ay * standoff);
+    if (!target) {
+      // Try a few other bearings before giving up on it.
+      for (let k = 1; k < 8 && !target; k++) {
+        const a = (k * Math.PI) / 4;
+        const bx = ax * Math.cos(a) - ay * Math.sin(a);
+        const by = ax * Math.sin(a) + ay * Math.cos(a);
+        target = nav.nearestFree(prop.x + bx * standoff, prop.y + by * standoff);
+      }
+    }
+    if (!target) return false;
+
+    this.queues.delete(index);
+    if (!this.driveTo(index, target.x, target.y, nav)) return false;
+    this.task[index] = BotTask.Fetch;
+    this.targetProp[index] = propIndex;
+    this.taskPhase[index] = Phase.Driving;
+    this.phaseTime[index] = 0;
+    return true;
+  }
+
+  /** Puts whatever is on the deck back on the floor, returning its variant. */
+  dropCarried(index: number): number {
+    const variant = this.carrying[index];
+    this.carrying[index] = -1;
+    return variant;
   }
 
   selectedIndices(out: number[] = []): number[] {
@@ -234,9 +358,183 @@ export class BotPool {
 
   // ------------------------------------------------------------ simulation
 
-  update(dt: number, nav: NavGrid): void {
+  /**
+   * Cargo the robots have to avoid. Rebuilt only when the world's crates
+   * change, since a per-frame scan over every crate for every robot would not
+   * survive a large fleet.
+   */
+  setProps(props: readonly Prop[]): void {
+    this.props = props;
+    this.propBuckets.clear();
+    for (let i = 0; i < props.length; i++) {
+      const key = this.propKey(props[i].x, props[i].y);
+      let bucket = this.propBuckets.get(key);
+      if (!bucket) {
+        bucket = [];
+        this.propBuckets.set(key, bucket);
+      }
+      bucket.push(i);
+    }
+  }
+
+  private propKey(x: number, y: number): number {
+    return (Math.floor(x / this.hashCell) << 16) ^ (Math.floor(y / this.hashCell) & 0xffff);
+  }
+
+  update(dt: number, nav: NavGrid, onPropTaken?: (propIndex: number) => void): void {
     for (let i = 0; i < this.count; i++) this.steer(i, dt, nav);
+    for (let i = 0; i < this.count; i++) this.advanceTask(i, dt, nav, onPropTaken);
     this.resolveCollisions(nav);
+    this.resolvePropOverlap(nav);
+  }
+
+  /**
+   * Runs the fetch sequence once the drive is finished: turn tail-on, reach the
+   * arms out, close on the crate, then stow it on the deck.
+   */
+  private advanceTask(
+    i: number,
+    dt: number,
+    nav: NavGrid,
+    onPropTaken?: (propIndex: number) => void,
+  ): void {
+    if (this.task[i] !== BotTask.Fetch) {
+      // Arms drift back to stowed whenever nothing is being collected.
+      if (this.armExtend[i] > 0) {
+        this.armExtend[i] = Math.max(0, this.armExtend[i] - dt / STOW_TIME);
+      }
+      return;
+    }
+
+    const propIndex = this.targetProp[i];
+    const prop = this.props[propIndex];
+    if (!prop) {
+      this.clearOrders(i);
+      return;
+    }
+
+    // Still driving: wait for the path to finish.
+    if (this.taskPhase[i] === Phase.Driving) {
+      if (this.state[i] === BotState.Moving) return;
+      this.taskPhase[i] = Phase.Aligning;
+      this.phaseTime[i] = 0;
+      return;
+    }
+
+    this.phaseTime[i] += dt;
+
+    if (this.taskPhase[i] === Phase.Aligning) {
+      // The deck and arms are at the back, so point the NOSE away from the load.
+      const want = Math.atan2(this.y[i] - prop.y, this.x[i] - prop.x);
+      const delta = angleDelta(this.angle[i], want);
+      const step = clamp(delta, -this.turnRate[i] * dt, this.turnRate[i] * dt);
+      this.angle[i] += step;
+      if (Math.abs(delta) < 0.05 || this.phaseTime[i] > 4) {
+        this.taskPhase[i] = Phase.Reaching;
+        this.phaseTime[i] = 0;
+      }
+      return;
+    }
+
+    if (this.taskPhase[i] === Phase.Reaching) {
+      this.armExtend[i] = Math.min(1, this.phaseTime[i] / REACH_TIME);
+      if (this.phaseTime[i] >= REACH_TIME) {
+        this.taskPhase[i] = Phase.Closing;
+        this.phaseTime[i] = 0;
+      }
+      return;
+    }
+
+    if (this.taskPhase[i] === Phase.Closing) {
+      this.armExtend[i] = 1;
+      if (this.phaseTime[i] >= CLOSE_TIME) {
+        // The crate leaves the world and rides on the deck from here.
+        this.carrying[i] = prop.variant;
+        onPropTaken?.(propIndex);
+        this.taskPhase[i] = Phase.Stowing;
+        this.phaseTime[i] = 0;
+      }
+      return;
+    }
+
+    // Stowing.
+    this.armExtend[i] = Math.max(0, 1 - this.phaseTime[i] / STOW_TIME);
+    if (this.phaseTime[i] >= STOW_TIME) {
+      this.armExtend[i] = 0;
+      this.task[i] = BotTask.None;
+      this.targetProp[i] = -1;
+      this.taskPhase[i] = Phase.Driving;
+    }
+  }
+
+  /**
+   * Pushes robots out of cargo using the real hull rectangle rather than a
+   * circle. The nav grid only reasons about the robot's centre, so a machine
+   * turning on the spot beside a crate could otherwise sweep its nose straight
+   * through it.
+   */
+  private resolvePropOverlap(nav: NavGrid): void {
+    if (this.props.length === 0) return;
+    const hx = BOT_LENGTH / 2;
+    const hy = BOT_WIDTH / 2;
+
+    for (let i = 0; i < this.count; i++) {
+      // A robot mid-grab is deliberately tucked up against its target.
+      const grabbing = this.task[i] === BotTask.Fetch && this.taskPhase[i] !== Phase.Driving;
+      const cx = Math.floor(this.x[i] / this.hashCell);
+      const cy = Math.floor(this.y[i] / this.hashCell);
+      const cos = Math.cos(-this.angle[i]);
+      const sin = Math.sin(-this.angle[i]);
+
+      for (let ox = -1; ox <= 1; ox++) {
+        for (let oy = -1; oy <= 1; oy++) {
+          const bucket = this.propBuckets.get(
+            ((cx + ox) << 16) ^ ((cy + oy) & 0xffff),
+          );
+          if (!bucket) continue;
+          for (let k = 0; k < bucket.length; k++) {
+            const prop = this.props[bucket[k]];
+            if (grabbing && bucket[k] === this.targetProp[i]) continue;
+
+            // Closest point on the hull rectangle, in the robot's own frame.
+            const dx = prop.x - this.x[i];
+            const dy = prop.y - this.y[i];
+            const lx = dx * cos - dy * sin;
+            const ly = dx * sin + dy * cos;
+            const nx = clamp(lx, -hx, hx);
+            const ny = clamp(ly, -hy, hy);
+            let sx = lx - nx;
+            let sy = ly - ny;
+            let dist = Math.hypot(sx, sy);
+
+            if (dist >= prop.radius) continue;
+            if (dist < 0.001) {
+              // Centre is inside the hull: leave along the shallowest face.
+              const toX = hx - Math.abs(lx);
+              const toY = hy - Math.abs(ly);
+              if (toX < toY) {
+                sx = lx >= 0 ? 1 : -1;
+                sy = 0;
+              } else {
+                sx = 0;
+                sy = ly >= 0 ? 1 : -1;
+              }
+              dist = 0.001;
+            }
+            const push = (prop.radius - dist) / dist;
+            // Back into world space and move the robot away from the crate.
+            const wx = (sx * cos + sy * sin) * push;
+            const wy = (-sx * sin + sy * cos) * push;
+            const tx = this.x[i] - wx;
+            const ty = this.y[i] - wy;
+            if (!nav.isBlockedWorld(tx, ty)) {
+              this.x[i] = tx;
+              this.y[i] = ty;
+            }
+          }
+        }
+      }
+    }
   }
 
   private steer(i: number, dt: number, nav: NavGrid): void {

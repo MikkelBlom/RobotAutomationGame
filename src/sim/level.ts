@@ -30,18 +30,20 @@ export const WALL_THICKNESS = 110;
 export const FLOOR = { x: 0, y: 0, w: 12000, h: 8400 } as const;
 
 /**
- * Depth of the dark strip north of the hall where trailers back onto the
- * loading bays. The camera may reach this far out so the inside of a docked
- * trailer is visible; everything else out here stays black.
+ * Dark margin outside the shell, on every side. The camera may reach into it,
+ * and it is where the view fades out — you never see past the building.
+ *
+ * The north margin is much deeper because trailers back onto the loading bays
+ * there and their interiors have to fit.
  */
-export const TRUCK_APRON = 700;
+export const APRON = { north: 1250, south: 500, west: 500, east: 500 } as const;
 
 /** Outer extent the camera may reach. */
 export const WORLD = {
-  x0: FLOOR.x - WALL_THICKNESS,
-  y0: FLOOR.y - WALL_THICKNESS - TRUCK_APRON,
-  x1: FLOOR.x + FLOOR.w + WALL_THICKNESS,
-  y1: FLOOR.y + FLOOR.h + WALL_THICKNESS,
+  x0: FLOOR.x - WALL_THICKNESS - APRON.west,
+  y0: FLOOR.y - WALL_THICKNESS - APRON.north,
+  x1: FLOOR.x + FLOOR.w + WALL_THICKNESS + APRON.east,
+  y1: FLOOR.y + FLOOR.h + WALL_THICKNESS + APRON.south,
 } as const;
 
 export const WORLD_W = WORLD.x1 - WORLD.x0;
@@ -51,29 +53,35 @@ export const WORLD_H = WORLD.y1 - WORLD.y0;
  * The flooded dock. Engineered excavation: straight runs on the axes, every
  * corner taken off at exactly 45 degrees (each diagonal below has |dx| = |dy|).
  *
- * The two notches are concrete boarding jetties reaching OUT from the banks
- * into the pool, so crew can step across onto a hull lying alongside. They are
- * floor, not water — the polygon bends around them.
+ * Sized around a hull. The basin is 89 m long and 40 m wide, and the two
+ * concrete boarding jetties reach out from opposite banks — directly facing
+ * each other, not staggered — leaving a 14 m channel between their noses with
+ * 40 m of quay down each side. A large fishing boat or a submarine lies along
+ * that channel with crew able to step across from either bank. The jetties are
+ * floor, not water; the polygon bends around them.
  */
 export const WATER_POLY: Polygon = [
-  -WALL_THICKNESS, 2340,
-  1150, 2340,
-  1670, 2860,   // 45 — north jetty, west side
-  2820, 2860,   //      jetty nose
-  3340, 2340,   // 45 — north jetty, east side
-  5330, 2340,
-  6000, 3010,   // 45 — NE corner
-  6000, 5490,
-  5330, 6160,   // 45 — SE corner
-  4650, 6160,
-  4130, 5640,   // 45 — south jetty, east side
-  2980, 5640,   //      jetty nose
-  2460, 6160,   // 45 — south jetty, west side
-  -WALL_THICKNESS, 6160,
+  -WALL_THICKNESS, 2400,
+  1100, 2400,
+  2400, 3700,   // 45 — north jetty, west face
+  6400, 3700,   //      north jetty nose, 40 m of quay
+  7700, 2400,   // 45 — north jetty, east face
+  7900, 2400,
+  8800, 3300,   // 45 — NE corner
+  8800, 5500,
+  7900, 6400,   // 45 — SE corner
+  7700, 6400,
+  6400, 5100,   // 45 — south jetty, east face
+  2400, 5100,   //      south jetty nose
+  1100, 6400,   // 45 — south jetty, west face
+  -WALL_THICKNESS, 6400,
 ];
 
+/** Clear channel between the jetty noses — this is the berth. */
+export const BERTH = { y0: 3700, y1: 5100, x0: 2400, x1: 6400 } as const;
+
 /** Vertical span of the opening where the dock passes through the west wall. */
-export const DOCK_OPENING = { y0: 2340, y1: 6160 } as const;
+export const DOCK_OPENING = { y0: 2400, y1: 6400 } as const;
 
 /** Where the channel meets open water. Swell enters here. */
 export const DOCK_MOUTH_X = WORLD.x0;
@@ -97,17 +105,21 @@ export interface DockBay {
   occupied: boolean;
 }
 
-/** Interior width of a standard trailer. */
-export const TRAILER_WIDTH = 245;
-export const BAY_WIDTH = 330;
+/**
+ * Trailer interior. A real road trailer is 245 cm inside — two Euro pallets
+ * side by side and nothing else. These are wider so a robot can drive in, turn,
+ * and set two crates down abreast.
+ */
+export const TRAILER_WIDTH = 420;
+export const BAY_WIDTH = 520;
 /** Floor strip kept clear in front of the loading bays. */
 export const BAY_APPROACH_DEPTH = 900;
 
 /** Bays sit along the north wall towards the east end. */
 export function buildDockBays(): DockBay[] {
   const bays: DockBay[] = [];
-  const first = 8200;
-  const spacing = 950;
+  const first = 8600;
+  const spacing = 1150;
   for (let i = 0; i < 4; i++) {
     bays.push({ x: first + i * spacing, width: BAY_WIDTH, occupied: i === 1 || i === 2 });
   }
@@ -212,7 +224,7 @@ export function buildLevelGeometry(seed: number): LevelGeometry {
       // Interior light in a docked trailer. Everything else beyond the shell
       // stays black, so this is the only thing that reads as "outside".
       lamps.push({
-        x: bay.x, y: -430, radius: 760,
+        x: bay.x, y: -820, radius: 1000,
         intensity: 0.8, flickers: false, phase: bay.x * 0.5,
       });
     }
@@ -308,4 +320,4 @@ function buildProps(
 }
 
 /** A sensible starting position for the first robot: dry floor, east of the dock. */
-export const SPAWN = { x: 8200, y: 4200 };
+export const SPAWN = { x: 10100, y: 4200 };

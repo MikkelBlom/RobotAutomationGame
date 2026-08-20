@@ -61,7 +61,10 @@ export class Renderer {
   private readonly compositeUniforms: Uniforms;
   private readonly emptyVao: WebGLVertexArrayObject;
 
-  private readonly floorTexture: WebGLTexture;
+  private readonly seed: number;
+  private readonly bays: DockBay[];
+  private floorTexture: WebGLTexture;
+  private bakedGrime = true;
   private readonly atlasTexture: WebGLTexture;
 
   private readonly floorBatch: SpriteBatch;
@@ -90,7 +93,9 @@ export class Renderer {
     if (!gl) throw new Error('WebGL2 is not available in this browser');
     this.gl = gl;
 
-    const floorCanvas = bakeFloor(seed, bays);
+    this.seed = seed;
+    this.bays = bays;
+    const floorCanvas = bakeFloor(seed, bays, { grime: true });
     const maxTex = gl.getParameter(gl.MAX_TEXTURE_SIZE) as number;
     if (floorCanvas.width > maxTex || floorCanvas.height > maxTex) {
       throw new Error(
@@ -126,6 +131,21 @@ export class Renderer {
     this.lightingPass = new LightingPass(level);
   }
 
+  /**
+   * Re-bakes the floor. Only used by the grime toggle: the wear is part of the
+   * baked albedo, so switching it costs a full re-bake. Fine for a debug
+   * control, not something to do per frame.
+   */
+  private syncFloorBake(grime: boolean): void {
+    if (grime === this.bakedGrime) return;
+    this.bakedGrime = grime;
+    const gl = this.gl;
+    gl.deleteTexture(this.floorTexture);
+    this.floorTexture = createTextureFromSource(
+      gl, bakeFloor(this.seed, this.bays, { grime }), { filter: gl.LINEAR },
+    );
+  }
+
   resize(cssWidth: number, cssHeight: number, pixelRatio: number): void {
     this.pixelRatio = pixelRatio;
     this.viewportWidth = cssWidth;
@@ -154,6 +174,7 @@ export class Renderer {
     const bounds = ctx.camera.visibleBounds(ctx.viewport, 220);
     const pass = this.lightingPass;
     let sprites = 0;
+    this.syncFloorBake(ctx.settings.floorGrime);
 
     // ------------------------------------------------------------- 1. albedo
     this.albedo.bind();

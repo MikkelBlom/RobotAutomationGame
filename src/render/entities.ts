@@ -1,6 +1,6 @@
 import type { LightingState } from '../core/dayCycle';
 import type { Settings } from '../core/settings';
-import { BOT_LENGTH, BOT_RADIUS, BOT_WIDTH, BotState, type BotPool } from '../sim/bots';
+import { BOT_LENGTH, BOT_RADIUS, BOT_WIDTH, BotState, BotTask, type BotPool } from '../sim/bots';
 import { BOT_ART, REGIONS } from './atlas';
 import type { Bounds } from './lighting';
 import type { SpriteBatch } from './spriteBatch';
@@ -21,6 +21,22 @@ const SPRITE_H = BOT_WIDTH * (BOT_ART.cell / (BOT_ART.halfWidth * 2));
 const TRAIL = { r: 0.36, g: 0.84, b: 1.0 };
 const TRAIL_PALE = { r: 0.72, g: 0.95, b: 1.0 };
 const SELECT = { r: 0.45, g: 0.89, b: 1.0 };
+
+/**
+ * Loader arm geometry, in centimetres.
+ *
+ * The boom occupies only about a tenth of its atlas cell, so ARM_WIDTH is the
+ * height of the whole cell, not of the visible arm — the boom itself ends up
+ * around 20 cm across.
+ */
+const ARM_STOWED = 45;
+const ARM_TRAVEL = 88;
+const ARM_WIDTH = 200;
+/** How far out from the centreline the arms sit, stowed and fully spread. */
+const ARM_SPREAD_IN = 0.30;
+const ARM_SPREAD_OUT = 0.62;
+/** A crate on the deck is drawn at its real footprint. */
+const CARRIED_SIZE = 165;
 
 const BOT_FRAMES = [
   REGIONS.botBody0, REGIONS.botBody1, REGIONS.botBody2, REGIONS.botBody3,
@@ -116,6 +132,56 @@ export class EntityRenderer {
     }
   }
 
+  /**
+   * Loader arms and whatever is riding on the deck.
+   *
+   * The arms live at the back of the machine and slide out behind it, which is
+   * why a robot reverses up to a crate before collecting it. Both are drawn
+   * into the albedo pass alongside the body.
+   */
+  drawLoad(batch: SpriteBatch, bounds: Bounds): void {
+    const b = this.bots;
+    for (let i = 0; i < b.count; i++) {
+      if (!visible(bounds, b.x[i], b.y[i], BOT_LENGTH * 2)) continue;
+      const cos = Math.cos(b.angle[i]);
+      const sin = Math.sin(b.angle[i]);
+
+      const extend = b.armExtend[i];
+      if (extend > 0.001) {
+        // Arms run rearward, one down each flank.
+        const reach = ARM_STOWED + extend * ARM_TRAVEL;
+        // The sprite points +x, so face it backwards along the hull.
+        const armAngle = b.angle[i] + Math.PI;
+        // The arms also swing outboard as they go, so they close around the
+        // sides of the crate rather than butting into its face.
+        const spread = BOT_WIDTH * (ARM_SPREAD_IN + extend * (ARM_SPREAD_OUT - ARM_SPREAD_IN));
+        for (const side of [-1, 1]) {
+          const offset = spread * side;
+          // Start at the tail, centred on the arm's own length.
+          const baseX = b.x[i] - cos * (BOT_LENGTH * 0.48) - sin * offset;
+          const baseY = b.y[i] - sin * (BOT_LENGTH * 0.48) + cos * offset;
+          const cx = baseX - cos * (reach / 2);
+          const cy = baseY - sin * (reach / 2);
+          batch.pushRegion(
+            REGIONS.botArm, cx, cy, armAngle, reach, ARM_WIDTH, 1, 1, 1, 1,
+          );
+        }
+      }
+
+      if (b.carrying[i] >= 0) {
+        const region =
+          b.carrying[i] === 0 ? REGIONS.crateTimber
+          : b.carrying[i] === 1 ? REGIONS.crateSteel
+          : REGIONS.palletStack;
+        // Sat on the deck, which is towards the back of the machine.
+        const dx = b.x[i] - cos * (BOT_LENGTH * 0.17);
+        const dy = b.y[i] - sin * (BOT_LENGTH * 0.17);
+        const size = CARRIED_SIZE;
+        batch.pushRegion(region, dx, dy, b.angle[i], size, size, 1, 1, 1, 1);
+      }
+    }
+  }
+
   /** Emissive detail, added after the light multiply so it survives darkness. */
   drawGlow(batch: SpriteBatch, bounds: Bounds, lighting: LightingState, time: number): void {
     const b = this.bots;
@@ -144,6 +210,7 @@ export class EntityRenderer {
 
     for (let i = 0; i < b.count && dots < MAX_TRAIL_DOTS; i++) {
       if (b.state[i] !== BotState.Moving) continue;
+      if (b.task[i] === BotTask.Fetch && !b.pathOf(i)) continue;
       const path = b.pathOf(i);
       if (!path) continue;
       const selected = b.selected[i] === 1;

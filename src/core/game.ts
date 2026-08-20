@@ -9,7 +9,7 @@ import { buildLevelGeometry, SPAWN, type LevelGeometry } from '../sim/level';
 import { NavGrid } from '../sim/navGrid';
 
 const EDGE_PAN_MARGIN = 58;
-const PAN_SPEED = 2600;
+const PAN_SPEED = 1750;
 /** Slack around a click when picking a single robot. */
 const CLICK_PICK_RADIUS = 110;
 
@@ -42,6 +42,12 @@ export class Game {
 
   private readonly container: HTMLElement;
   private readonly selectionBox: HTMLDivElement;
+  /**
+   * Where the drag began, in WORLD space. Anchoring in screen space meant the
+   * box slid across the floor when the camera panned; anchored here it stays
+   * put and simply grows.
+   */
+  private dragAnchor: { x: number; y: number } | null = null;
   private lastFrame = performance.now();
   private elapsed = 0;
   private fpsAccum = 0;
@@ -58,6 +64,7 @@ export class Game {
     this.input = new Input(this.renderer.canvas);
     this.renderer.setLevel(this.level);
     this.nav = new NavGrid(this.level.columns, this.level.props, BOT_RADIUS);
+    this.bots.setProps(this.level.props);
     this.entities = new EntityRenderer(this.bots);
 
     // Start with a single machine, as asked.
@@ -173,7 +180,10 @@ export class Game {
       settings: this.settings,
       level: this.level,
       time,
-      drawEntities: (batch, bounds) => this.entities.drawBodies(batch, bounds),
+      drawEntities: (batch, bounds) => {
+        this.entities.drawBodies(batch, bounds);
+        this.entities.drawLoad(batch, bounds);
+      },
       drawEntityShadows: (batch, bounds) =>
         this.entities.drawShadows(batch, bounds, lighting, this.settings),
       drawEntityLights: (batch, bounds) =>
@@ -194,7 +204,7 @@ export class Game {
     this.updateCamera(dt);
     this.updateSelection();
     this.updateOrders();
-    this.bots.update(dt * this.settings.simSpeed, this.nav);
+    this.bots.update(dt * this.settings.simSpeed, this.nav, this.takeProp);
   }
 
   private updateCamera(dt: number): void {
@@ -236,29 +246,40 @@ export class Game {
     const input = this.input;
     const vp = this.viewport;
 
-    // Live rubber band.
+    // Live rubber band, anchored to the world point first clicked.
     const drag = input.drag;
-    if (drag.active && Math.hypot(drag.currentX - drag.startX, drag.currentY - drag.startY) > 5) {
-      const x = Math.min(drag.startX, drag.currentX);
-      const y = Math.min(drag.startY, drag.currentY);
-      this.selectionBox.style.display = 'block';
-      this.selectionBox.style.left = `${x}px`;
-      this.selectionBox.style.top = `${y}px`;
-      this.selectionBox.style.width = `${Math.abs(drag.currentX - drag.startX)}px`;
-      this.selectionBox.style.height = `${Math.abs(drag.currentY - drag.startY)}px`;
+    if (drag.active && !this.dragAnchor) {
+      this.dragAnchor = this.camera.screenToWorld(drag.startX, drag.startY, vp);
+    }
+    if (drag.active && this.dragAnchor) {
+      const anchor = this.camera.worldToScreen(this.dragAnchor.x, this.dragAnchor.y, vp);
+      if (Math.hypot(drag.currentX - anchor.x, drag.currentY - anchor.y) > 5) {
+        this.selectionBox.style.display = 'block';
+        this.selectionBox.style.left = `${Math.min(anchor.x, drag.currentX)}px`;
+        this.selectionBox.style.top = `${Math.min(anchor.y, drag.currentY)}px`;
+        this.selectionBox.style.width = `${Math.abs(drag.currentX - anchor.x)}px`;
+        this.selectionBox.style.height = `${Math.abs(drag.currentY - anchor.y)}px`;
+      }
     } else if (!drag.active) {
       this.selectionBox.style.display = 'none';
     }
 
     const done = input.dragCompleted;
-    if (!done) return;
+    if (!done) {
+      return;
+    }
     this.selectionBox.style.display = 'none';
+    const anchor = this.dragAnchor;
+    this.dragAnchor = null;
     const additive = input.isDown('shift');
 
-    if (done.moved) {
-      const a = this.camera.screenToWorld(done.x0, done.y0, vp);
-      const b = this.camera.screenToWorld(done.x1, done.y1, vp);
-      this.bots.selectInRect(a.x, a.y, b.x, b.y, additive);
+    if (done.moved && anchor) {
+      const end = this.camera.screenToWorld(input.mouseX, input.mouseY, vp);
+      this.bots.selectInRect(
+        Math.min(anchor.x, end.x), Math.min(anchor.y, end.y),
+        Math.max(anchor.x, end.x), Math.max(anchor.y, end.y),
+        additive,
+      );
     } else {
       const w = this.camera.screenToWorld(done.x0, done.y0, vp);
       const hit = this.bots.pick(w.x, w.y, CLICK_PICK_RADIUS / this.camera.zoom + CLICK_PICK_RADIUS);
@@ -267,12 +288,59 @@ export class Game {
     }
   }
 
+  /**
+   * Removes a crate from the world once a robot has it on the deck, and
+   * re-rasterises the nav grid so everything can now drive through where it was.
+   */
+  private takeProp = (propIndex: number): void => {
+    const prop = this.level.props[propIndex];
+    if (!prop) return;
+    this.level.props.splice(propIndex, 1);
+    // Indices shift, so anything still targeting a later crate must follow.
+    for (let i = 0; i < this.bots.count; i++) {
+      if (this.bots.targetProp[i] > propIndex) this.bots.targetProp[i]--;
+    }
+    this.bots.setProps(this.level.props);
+    this.nav.rebuild(this.level.columns, this.level.props);
+  };
+
+  /** Nearest crate to a world point, within a generous grab radius. */
+  private pickProp(x: number, y: number): number {
+    let best = -1;
+    let bestDist = Infinity;
+    for (let i = 0; i < this.level.props.length; i++) {
+      const p = this.level.props[i];
+      const d = Math.hypot(p.x - x, p.y - y);
+      if (d < p.radius + 90 && d < bestDist) {
+        bestDist = d;
+        best = i;
+      }
+    }
+    return best;
+  }
+
   private updateOrders(): void {
     const click = this.input.rightClick;
     if (!click) return;
     const target = this.camera.screenToWorld(click.x, click.y, this.viewport);
     const selected = this.bots.selectedIndices();
     if (selected.length === 0) return;
+
+    // Right-clicking a crate sends the nearest selected robot to collect it.
+    const propIndex = this.pickProp(target.x, target.y);
+    if (propIndex >= 0) {
+      let closest = selected[0];
+      let closestDist = Infinity;
+      for (const i of selected) {
+        const d = Math.hypot(this.bots.x[i] - target.x, this.bots.y[i] - target.y);
+        if (d < closestDist) {
+          closestDist = d;
+          closest = i;
+        }
+      }
+      this.bots.orderFetch(closest, propIndex, this.level.props[propIndex], this.nav);
+      return;
+    }
 
     // Shift queues the destination behind the current order instead of
     // replacing it, so a route can be built up click by click.

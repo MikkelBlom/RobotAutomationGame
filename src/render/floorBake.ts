@@ -92,7 +92,16 @@ function makeConcreteNoise(rng: Rng, size: number): HTMLCanvasElement {
  */
 export const BAKE_SCALE = 0.30;
 
-export function bakeFloor(seed: number, bays: DockBay[]): HTMLCanvasElement {
+export interface BakeOptions {
+  /** Stains, puddles, oil and wear on the slab. Toggleable for level layout. */
+  grime: boolean;
+}
+
+export function bakeFloor(
+  seed: number,
+  bays: DockBay[],
+  options: BakeOptions = { grime: true },
+): HTMLCanvasElement {
   const rng = makeRng(seed);
   const cv = document.createElement('canvas');
   cv.width = Math.ceil(WORLD_W * BAKE_SCALE);
@@ -112,15 +121,20 @@ export function bakeFloor(seed: number, bays: DockBay[]): HTMLCanvasElement {
   paintWallShell(ctx, rng, bays);
   paintSlab(ctx, rng);
   paintPourJoints(ctx, rng);
-  paintGrime(ctx, rng);
-  paintTrafficWear(ctx, rng);
-  paintPuddlesAndOil(ctx, rng);
-  paintCracks(ctx, rng);
+  if (options.grime) {
+    paintGrime(ctx, rng);
+    paintTrafficWear(ctx, rng);
+    paintPuddlesAndOil(ctx, rng);
+    paintCracks(ctx, rng);
+  }
   paintBasinPit(ctx);
   paintDampRing(ctx);
   paintHazardBand(ctx, rng, cv.width, cv.height);
   paintWallContactShadow(ctx);
   paintDockMouth(ctx, rng);
+  // Fog goes on before the trailers, so a docked trailer stays the one lit
+  // thing beyond the shell.
+  paintOutsideFog(ctx);
   paintLoadingBays(ctx, rng, bays);
 
   ctx.restore();
@@ -541,7 +555,7 @@ function paintGrime(ctx: CanvasRenderingContext2D, rng: Rng): void {
     ctx.createLinearGradient(FLOOR.x + FLOOR.w, 0, FLOOR.x + FLOOR.w - 560, 0),
   ];
   for (let i = 0; i < 4; i++) {
-    gradients[i].addColorStop(0, 'rgba(60,56,46,0.42)');
+    gradients[i].addColorStop(0, 'rgba(60,56,46,0.22)');
     gradients[i].addColorStop(1, 'rgba(60,56,46,0)');
     ctx.fillStyle = gradients[i];
     ctx.fillRect(edges[i][0], edges[i][1], edges[i][2], edges[i][3]);
@@ -951,4 +965,58 @@ function paintWallContactShadow(ctx: CanvasRenderingContext2D): void {
     FLOOR.x + FLOOR.w - depth, FLOOR.y, depth, FLOOR.h,
   );
   ctx.restore();
+}
+
+/**
+ * Darkens everything outside the slab, on all four sides.
+ *
+ * The fade starts at the floor edge, is already well down by the outer face of
+ * the wall, and is solid a little way into the apron. The wall still reads as
+ * part of the building rather than being cut off flat, but nothing beyond it is
+ * ever legible.
+ */
+function paintOutsideFog(ctx: CanvasRenderingContext2D): void {
+  const ink = '5,7,10';
+
+  const band = (
+    grad: CanvasGradient,
+    wallFraction: number,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+  ): void => {
+    grad.addColorStop(0, `rgba(${ink},0)`);
+    grad.addColorStop(wallFraction, `rgba(${ink},0.45)`);
+    grad.addColorStop(Math.min(0.92, wallFraction + 0.34), `rgba(${ink},1)`);
+    grad.addColorStop(1, `rgba(${ink},1)`);
+    ctx.fillStyle = grad;
+    ctx.fillRect(x, y, w, h);
+  };
+
+  const northDepth = FLOOR.y - WORLD.y0;
+  const southDepth = WORLD.y1 - (FLOOR.y + FLOOR.h);
+  const westDepth = FLOOR.x - WORLD.x0;
+  const eastDepth = WORLD.x1 - (FLOOR.x + FLOOR.w);
+
+  band(
+    ctx.createLinearGradient(0, FLOOR.y, 0, WORLD.y0),
+    WALL_THICKNESS / northDepth,
+    WORLD.x0, WORLD.y0, WORLD_W, northDepth,
+  );
+  band(
+    ctx.createLinearGradient(0, FLOOR.y + FLOOR.h, 0, WORLD.y1),
+    WALL_THICKNESS / southDepth,
+    WORLD.x0, FLOOR.y + FLOOR.h, WORLD_W, southDepth,
+  );
+  band(
+    ctx.createLinearGradient(FLOOR.x, 0, WORLD.x0, 0),
+    WALL_THICKNESS / westDepth,
+    WORLD.x0, WORLD.y0, westDepth, WORLD_H,
+  );
+  band(
+    ctx.createLinearGradient(FLOOR.x + FLOOR.w, 0, WORLD.x1, 0),
+    WALL_THICKNESS / eastDepth,
+    FLOOR.x + FLOOR.w, WORLD.y0, eastDepth, WORLD_H,
+  );
 }

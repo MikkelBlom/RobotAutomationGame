@@ -20,7 +20,7 @@ export const ATLAS_SIZE = 2048;
  * than the hull so it stays sharp at close zoom; renderers convert hull size
  * to sprite size with these.
  */
-export const BOT_ART = { cell: 256, halfLength: 100, halfWidth: 72 } as const;
+export const BOT_ART = { cell: 256, halfLength: 110, halfWidth: 76 } as const;
 
 const CELLS = {
   /** Soft radial falloff — light pools. */
@@ -50,6 +50,9 @@ const CELLS = {
   crateSteel: [768, 256, 256, 256],
   /** Stack of pallets. */
   palletStack: [1024, 256, 256, 256],
+
+  /** Loader arm, stowed at the cell's left edge, extending towards +x. */
+  botArm: [1280, 256, 256, 256],
 
   /** Ground robot body. Four frames, tracks advanced a quarter pitch each. */
   botBody0: [0, 512, 256, 256],
@@ -98,6 +101,7 @@ export function buildAtlas(seed: number): HTMLCanvasElement {
   drawHardShadow(ctx);
   for (let frame = 0; frame < 4; frame++) drawBotBody(ctx, makeRng(seed ^ 0x4a71), frame);
   drawBotGlow(ctx);
+  drawBotArm(ctx);
   drawCone(ctx);
   drawRing(ctx);
   drawDot(ctx);
@@ -312,110 +316,199 @@ function drawBlockShadow(ctx: CanvasRenderingContext2D): void {
 }
 
 /**
- * Ground robot, seen from above and pointing +x. Tracked chassis, cargo deck,
- * sensor head. Drawn at high resolution so it survives close zoom.
+ * Ground robot, seen from above and pointing +x.
+ *
+ * Built around the load it carries: the deck has to take a 120 x 80 Euro pallet
+ * with handling clearance, which is what sets the machine at 240 x 150 cm. The
+ * loader arms live in recesses down each flank and reach out behind.
  */
 function drawBotBody(
   ctx: CanvasRenderingContext2D,
   rng: ReturnType<typeof makeRng>,
   frame: number,
 ): void {
-  cell(ctx, `botBody${frame}` as SpriteName);
-  // Authored in a 256-wide cell for a robot 64 long x 46 wide -> scale to fit.
-  const L = 100; // half-length in cell units
-  const W = 72; // half-width
+  cell(ctx, ('botBody' + frame) as SpriteName);
+  const L = BOT_ART.halfLength;
+  const W = BOT_ART.halfWidth;
 
-  // Tracks along both flanks.
+  // Tracks down both flanks.
   for (const side of [-1, 1]) {
-    ctx.fillStyle = '#20242a';
+    ctx.fillStyle = '#1c2025';
     ctx.beginPath();
-    ctx.roundRect(-L + 4, side * W - 26, L * 2 - 8, 52, 14);
+    ctx.roundRect(-L + 4, side * W - 30, L * 2 - 20, 60, 15);
     ctx.fill();
     ctx.fillStyle = '#4e565e';
     ctx.beginPath();
-    ctx.roundRect(-L + 10, side * W - 19, L * 2 - 20, 38, 10);
+    ctx.roundRect(-L + 11, side * W - 22, L * 2 - 34, 44, 11);
     ctx.fill();
-    // Track links.
-    ctx.strokeStyle = 'rgba(12,14,16,0.6)';
-    ctx.lineWidth = 6;
-    const pitch = 22;
+
+    // Track links advance a quarter pitch per frame; that is what makes the
+    // machine look like it is driving rather than sliding.
+    const pitch = 24;
     const offset = (frame / 4) * pitch;
     ctx.save();
     ctx.beginPath();
-    ctx.roundRect(-L + 10, side * W - 19, L * 2 - 20, 38, 10);
+    ctx.roundRect(-L + 11, side * W - 22, L * 2 - 34, 44, 11);
     ctx.clip();
+    ctx.strokeStyle = 'rgba(10,12,15,0.62)';
+    ctx.lineWidth = 7;
     ctx.beginPath();
     for (let x = -L - pitch + offset; x < L + pitch; x += pitch) {
-      ctx.moveTo(x, side * W - 19);
-      ctx.lineTo(x, side * W + 19);
+      ctx.moveTo(x, side * W - 22);
+      ctx.lineTo(x, side * W + 22);
     }
     ctx.stroke();
-    // Catch light on the trailing face of each link.
-    ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+    ctx.strokeStyle = 'rgba(255,255,255,0.11)';
     ctx.lineWidth = 3;
     ctx.beginPath();
-    for (let x = -L - pitch + offset + 5; x < L + pitch; x += pitch) {
-      ctx.moveTo(x, side * W - 19);
-      ctx.lineTo(x, side * W + 19);
+    for (let x = -L - pitch + offset + 6; x < L + pitch; x += pitch) {
+      ctx.moveTo(x, side * W - 22);
+      ctx.lineTo(x, side * W + 22);
     }
     ctx.stroke();
     ctx.restore();
+
+    // Drive sprocket at the front, idler at the back.
+    for (const px of [-L + 20, L - 32]) {
+      ctx.fillStyle = '#333b42';
+      ctx.beginPath();
+      ctx.arc(px, side * W, 15, 0, TAU);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.14)';
+      ctx.beginPath();
+      ctx.arc(px - 3, side * W - 3, 7, 0, TAU);
+      ctx.fill();
+    }
   }
 
-  // Chassis: chamfered nose so heading is obvious from above.
+  // Chassis, chamfered at the nose so heading is obvious from above.
   ctx.beginPath();
-  ctx.moveTo(-L + 6, -W + 12);
-  ctx.lineTo(L - 34, -W + 12);
-  ctx.lineTo(L, -W + 44);
-  ctx.lineTo(L, W - 44);
-  ctx.lineTo(L - 34, W - 12);
-  ctx.lineTo(-L + 6, W - 12);
+  ctx.moveTo(-L + 8, -W + 16);
+  ctx.lineTo(L - 40, -W + 16);
+  ctx.lineTo(L, -W + 52);
+  ctx.lineTo(L, W - 52);
+  ctx.lineTo(L - 40, W - 16);
+  ctx.lineTo(-L + 8, W - 16);
   ctx.closePath();
   ctx.fillStyle = '#a8b0b7';
   ctx.fill();
   ctx.strokeStyle = 'rgba(18,20,22,0.75)';
-  ctx.lineWidth = 5;
+  ctx.lineWidth = 6;
   ctx.stroke();
 
-  // Recessed cargo deck.
-  ctx.fillStyle = '#7f878e';
+  // The deck. Sized for a Euro pallet with room to set it down.
+  const deckX0 = -L + 16;
+  const deckLen = 132;
+  const deckHalf = W - 30;
+  ctx.fillStyle = '#6a727a';
   ctx.beginPath();
-  ctx.roundRect(-L + 22, -W + 28, 108, (W - 28) * 2, 8);
+  ctx.roundRect(deckX0, -deckHalf, deckLen, deckHalf * 2, 7);
   ctx.fill();
-  ctx.strokeStyle = 'rgba(18,20,22,0.5)';
-  ctx.lineWidth = 4;
+  ctx.strokeStyle = 'rgba(16,18,20,0.6)';
+  ctx.lineWidth = 5;
   ctx.stroke();
-  ctx.fillStyle = 'rgba(255,255,255,0.09)';
-  ctx.fillRect(-L + 22, -W + 28, 108, 9);
+  // Roller bed running the length of the deck.
+  ctx.strokeStyle = 'rgba(20,23,26,0.45)';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  for (let x = deckX0 + 14; x < deckX0 + deckLen - 6; x += 17) {
+    ctx.moveTo(x, -deckHalf + 7);
+    ctx.lineTo(x, deckHalf - 7);
+  }
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,0.10)';
+  ctx.fillRect(deckX0, -deckHalf, deckLen, 8);
+
+  // Arm recesses down each flank, so the stowed arms have somewhere to live.
+  ctx.fillStyle = 'rgba(24,28,32,0.75)';
+  for (const side of [-1, 1]) {
+    ctx.beginPath();
+    ctx.roundRect(-L + 12, side * (W - 26) - 8, 96, 16, 5);
+    ctx.fill();
+  }
 
   // Hazard flashes on the shoulders.
   ctx.fillStyle = '#d8a92f';
-  for (let i = 0; i < 3; i++) {
-    ctx.fillRect(-L + 28 + i * 22, -W + 14, 13, 11);
-    ctx.fillRect(-L + 28 + i * 22, W - 25, 13, 11);
+  for (let i = 0; i < 4; i++) {
+    ctx.fillRect(-L + 26 + i * 26, -W + 18, 15, 12);
+    ctx.fillRect(-L + 26 + i * 26, W - 30, 15, 12);
   }
 
   // Sensor head at the nose.
   ctx.fillStyle = '#3a4148';
   ctx.beginPath();
-  ctx.roundRect(L - 62, -30, 54, 60, 10);
+  ctx.roundRect(L - 72, -34, 62, 68, 12);
   ctx.fill();
   ctx.strokeStyle = 'rgba(18,20,22,0.7)';
-  ctx.lineWidth = 4;
+  ctx.lineWidth = 5;
   ctx.stroke();
 
   // Wear.
-  for (let i = 0; i < 16; i++) {
-    ctx.globalAlpha = rng.range(0.06, 0.2);
+  for (let i = 0; i < 18; i++) {
+    ctx.globalAlpha = rng.range(0.05, 0.18);
     ctx.fillStyle = rng.chance(0.55) ? '#7a4520' : '#23262a';
     ctx.beginPath();
     ctx.ellipse(
       rng.range(-L, L), rng.range(-W, W),
-      rng.range(3, 12), rng.range(3, 10), rng.range(0, TAU), 0, TAU,
+      rng.range(4, 14), rng.range(3, 11), rng.range(0, TAU), 0, TAU,
     );
     ctx.fill();
   }
   ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+/**
+ * One loader arm: a boom with a gripper pad on the end, drawn along +x from the
+ * left edge of its cell so the renderer can stretch it to whatever extension
+ * the grab animation has reached.
+ */
+function drawBotArm(ctx: CanvasRenderingContext2D): void {
+  const { size } = cell(ctx, 'botArm');
+  const half = size / 2;
+
+  ctx.fillStyle = '#5c646b';
+  ctx.beginPath();
+  ctx.roundRect(-half + 6, -13, size - 40, 26, 7);
+  ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.16)';
+  ctx.fillRect(-half + 6, -13, size - 40, 7);
+  ctx.strokeStyle = 'rgba(14,16,18,0.75)';
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.roundRect(-half + 6, -13, size - 40, 26, 7);
+  ctx.stroke();
+
+  // Slide rail down the middle of the boom.
+  ctx.strokeStyle = 'rgba(20,23,26,0.5)';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(-half + 14, 0);
+  ctx.lineTo(half - 40, 0);
+  ctx.stroke();
+
+  // Shoulder pivot.
+  ctx.fillStyle = '#3d444b';
+  ctx.beginPath();
+  ctx.arc(-half + 14, 0, 17, 0, TAU);
+  ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.18)';
+  ctx.beginPath();
+  ctx.arc(-half + 10, -4, 7, 0, TAU);
+  ctx.fill();
+
+  // Gripper pad at the far end.
+  ctx.fillStyle = '#2b3137';
+  ctx.beginPath();
+  ctx.roundRect(half - 44, -30, 26, 60, 6);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(12,14,16,0.8)';
+  ctx.lineWidth = 5;
+  ctx.stroke();
+  ctx.fillStyle = '#15181b';
+  ctx.fillRect(half - 24, -26, 10, 52);
+  ctx.fillStyle = '#d8a92f';
+  ctx.fillRect(half - 44, -30, 26, 5);
   ctx.restore();
 }
 
