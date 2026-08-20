@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Warehouse — Robot Automation</title>
+    <link rel="icon" href="data:," />
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #0a0b0d;
+        font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+        color: #d8d3c8;
+        -webkit-font-smoothing: antialiased;
+      }
+      #stage { position: fixed; inset: 0; }
+      #stage canvas { display: block; width: 100%; height: 100%; }
+      #boot {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-content: center;
+        gap: 10px;
+        text-align: center;
+        font-size: 12px;
+        letter-spacing: 2px;
+        color: #6f7780;
+        background: #0a0b0d;
+        transition: opacity 0.5s ease;
+        z-index: 50;
+      }
+      #boot.gone { opacity: 0; pointer-events: none; }
+      #boot b { color: #e8b551; font-weight: 500; letter-spacing: 3px; }
+    </style>
+  </head>
+  <body>
+    <div id="stage"></div>
+    <div id="boot"><b>WAREHOUSE</b><span id="boot-msg">initialising</span></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
