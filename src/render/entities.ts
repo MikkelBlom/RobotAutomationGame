@@ -11,6 +11,9 @@ import type { SpriteBatch } from './spriteBatch';
  * additive light, and trails/selection unlit on top.
  */
 
+/** Track links are 22 cm apart in the art; four frames cover one pitch. */
+const TRACK_PITCH = 22 * (165 / 200);
+
 /** The atlas cell is larger than the hull, so convert once. */
 const SPRITE_W = BOT_LENGTH * (BOT_ART.cell / (BOT_ART.halfLength * 2));
 const SPRITE_H = BOT_WIDTH * (BOT_ART.cell / (BOT_ART.halfWidth * 2));
@@ -19,8 +22,12 @@ const TRAIL = { r: 0.36, g: 0.84, b: 1.0 };
 const TRAIL_PALE = { r: 0.72, g: 0.95, b: 1.0 };
 const SELECT = { r: 0.45, g: 0.89, b: 1.0 };
 
+const BOT_FRAMES = [
+  REGIONS.botBody0, REGIONS.botBody1, REGIONS.botBody2, REGIONS.botBody3,
+];
+
 /** Spacing between trail dots, in world units. */
-const TRAIL_STEP = 17;
+const TRAIL_STEP = 46;
 /** Hard cap so a huge selection cannot flood the batch. */
 const MAX_TRAIL_DOTS = 4000;
 
@@ -31,13 +38,18 @@ function visible(b: Bounds, x: number, y: number, pad: number): boolean {
 export class EntityRenderer {
   constructor(private readonly bots: BotPool) {}
 
-  /** Robot bodies, into the albedo pass. */
+  /**
+   * Robot bodies, into the albedo pass. The track frame is chosen from distance
+   * driven, so the links visibly walk when the robot moves and stop when it
+   * does — four baked frames cost nothing extra, they are just different UVs.
+   */
   drawBodies(batch: SpriteBatch, bounds: Bounds): void {
     const b = this.bots;
     for (let i = 0; i < b.count; i++) {
       if (!visible(bounds, b.x[i], b.y[i], BOT_LENGTH)) continue;
+      const frame = ((Math.floor(b.odometer[i] / TRACK_PITCH * 4) % 4) + 4) % 4;
       batch.pushRegion(
-        REGIONS.botBody, b.x[i], b.y[i], b.angle[i], SPRITE_W, SPRITE_H, 1, 1, 1, 1,
+        BOT_FRAMES[frame], b.x[i], b.y[i], b.angle[i], SPRITE_W, SPRITE_H, 1, 1, 1, 1,
       );
     }
   }
@@ -50,6 +62,9 @@ export class EntityRenderer {
     // of it, it just turned the machine into a dark smudge.
     const offX = lighting.shadowOffsetX * 0.62;
     const offY = lighting.shadowOffsetY * 0.62;
+    const len = Math.hypot(offX, offY) || 1;
+    const dirX = offX / len;
+    const dirY = offY / len;
     const directional = Math.min(1, lighting.sunIntensity * 0.7 + 0.3);
     for (let i = 0; i < b.count; i++) {
       if (!visible(bounds, b.x[i], b.y[i], BOT_LENGTH * 2)) continue;
@@ -59,11 +74,13 @@ export class EntityRenderer {
         SPRITE_W * 0.88, SPRITE_H * 0.88,
         0, 0, 0, 0.44 * directional,
       );
-      // Tight darkening right under the hull so it still sits on the floor.
+      // Hard contact shadow, offset so a crescent emerges from under the
+      // hull. Centred it would just darken the robot itself.
       batch.pushRegion(
-        REGIONS.blockShadow, b.x[i], b.y[i], b.angle[i],
-        SPRITE_W * 0.6, SPRITE_H * 0.6,
-        0, 0, 0, 0.16,
+        REGIONS.hardShadow,
+        b.x[i] + dirX * BOT_LENGTH * 0.34, b.y[i] + dirY * BOT_LENGTH * 0.34, b.angle[i],
+        SPRITE_W * 0.82, SPRITE_H * 0.86,
+        0, 0, 0, 0.62,
       );
     }
   }
@@ -78,12 +95,12 @@ export class EntityRenderer {
     const strength = 0.22 + nightness * 0.78;
 
     for (let i = 0; i < b.count; i++) {
-      if (!visible(bounds, b.x[i], b.y[i], 420)) continue;
+      if (!visible(bounds, b.x[i], b.y[i], 900)) continue;
       const cos = Math.cos(b.angle[i]);
       const sin = Math.sin(b.angle[i]);
 
       // Headlight cone, thrown ahead of the nose.
-      const reach = 250;
+      const reach = 620;
       const cx = b.x[i] + cos * reach * 0.42;
       const cy = b.y[i] + sin * reach * 0.42;
       batch.pushRegion(
@@ -93,7 +110,7 @@ export class EntityRenderer {
 
       // Warm pool directly under the chassis.
       batch.pushRegion(
-        REGIONS.radial, b.x[i], b.y[i], 0, 190, 190,
+        REGIONS.radial, b.x[i], b.y[i], 0, 520, 520,
         1.0, 0.72, 0.42, 0.24 * strength,
       );
     }
@@ -153,12 +170,12 @@ export class EntityRenderer {
             const along = travelled + d;
             if (visible(bounds, px, py, 40)) {
               // A pulse runs from the robot towards the destination.
-              const wave = Math.sin(along * 0.055 - time * 4.2);
+              const wave = Math.sin(along * 0.020 - time * 4.2);
               const pulse = 0.42 + 0.58 * Math.max(0, wave);
               // Fade in just ahead of the robot, out at the far end.
-              const lead = Math.min(1, along / 55);
+              const lead = Math.min(1, along / 150);
               const alpha = baseAlpha * pulse * lead * 0.5;
-              const size = 13 + pulse * 9;
+              const size = 34 + pulse * 24;
               batch.pushRegion(
                 REGIONS.dot, px, py, 0, size, size,
                 TRAIL.r, TRAIL.g, TRAIL.b, alpha,
@@ -177,7 +194,7 @@ export class EntityRenderer {
       // Destination marker: a slow pulse so it is findable without shouting.
       if (visible(bounds, b.goalX[i], b.goalY[i], 90)) {
         const beat = 0.5 + 0.5 * Math.sin(time * 2.6);
-        const size = 46 + beat * 12;
+        const size = 150 + beat * 40;
         batch.pushRegion(
           REGIONS.marker, b.goalX[i], b.goalY[i], time * 0.35, size, size,
           TRAIL_PALE.r, TRAIL_PALE.g, TRAIL_PALE.b, baseAlpha * (0.4 + beat * 0.35),
@@ -200,9 +217,9 @@ export class EntityRenderer {
             const px = fromX + ux * d;
             const py = fromY + uy * d;
             if (!visible(bounds, px, py, 40)) continue;
-            const wave = Math.sin(d * 0.045 - time * 3.0);
+            const wave = Math.sin(d * 0.016 - time * 3.0);
             batch.pushRegion(
-              REGIONS.dot, px, py, 0, 10, 10,
+              REGIONS.dot, px, py, 0, 26, 26,
               TRAIL.r, TRAIL.g, TRAIL.b,
               baseAlpha * 0.22 * (0.5 + 0.5 * Math.max(0, wave)),
             );
@@ -210,7 +227,7 @@ export class EntityRenderer {
           }
           if (visible(bounds, toX, toY, 90)) {
             batch.pushRegion(
-              REGIONS.marker, toX, toY, time * 0.2, 34, 34,
+              REGIONS.marker, toX, toY, time * 0.2, 105, 105,
               TRAIL_PALE.r, TRAIL_PALE.g, TRAIL_PALE.b, baseAlpha * 0.4,
             );
           }
@@ -228,7 +245,7 @@ export class EntityRenderer {
     for (let i = 0; i < b.count; i++) {
       if (!b.selected[i]) continue;
       if (!visible(bounds, b.x[i], b.y[i], BOT_LENGTH)) continue;
-      const size = BOT_RADIUS * 3.5;
+      const size = BOT_RADIUS * 3.3;
       batch.pushRegion(
         REGIONS.ring, b.x[i], b.y[i], spin, size, size,
         SELECT.r, SELECT.g, SELECT.b, 0.95,

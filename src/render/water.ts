@@ -7,12 +7,12 @@ import { DOCK_MOUTH_X, WATER_BOUNDS, WATER_POLY } from '../sim/level';
 import { distanceToEdges, pointInPolygon, triangulate } from '../sim/polygon';
 
 /** World units per distance-field texel. Foam bands are ~15 units, so 4 is ample. */
-const SDF_RESOLUTION = 4;
+const SDF_RESOLUTION = 12;
 /** Texels of slack around the basin so bilinear taps never wrap. */
 const SDF_PAD = 6;
 
-const NEAR_RANGE = 96;
-const BROAD_RANGE = 620;
+const NEAR_RANGE = 340;
+const BROAD_RANGE = 2400;
 
 /** Neutral water albedo; time of day arrives via the lighting pass. */
 const COLORS = {

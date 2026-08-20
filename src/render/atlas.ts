@@ -13,7 +13,7 @@ export interface Region {
   v1: number;
 }
 
-export const ATLAS_SIZE = 1024;
+export const ATLAS_SIZE = 2048;
 
 /**
  * How the robot is laid out inside its atlas cell. The art is drawn larger
@@ -23,32 +23,39 @@ export const ATLAS_SIZE = 1024;
 export const BOT_ART = { cell: 256, halfLength: 100, halfWidth: 72 } as const;
 
 const CELLS = {
-  /** Soft radial falloff — light pools and contact shadows. */
+  /** Soft radial falloff — light pools. */
   radial: [0, 0, 256, 256],
   /** Soft-edged rectangle — daylight shafts from the roof glazing. */
   shaft: [256, 0, 256, 256],
   /** Structural column, viewed from above. */
   column: [512, 0, 256, 256],
-  /** Squarish soft blob — shadow cast by a column. */
+  /** Soft blob — the long shadow an object throws. */
   blockShadow: [768, 0, 256, 256],
-  /** Ground robot, unlit colour. */
-  botBody: [0, 256, 256, 256],
+  /** Tight, hard-edged darkening right under an object, so it sits on the floor. */
+  hardShadow: [1024, 0, 256, 256],
+  /** Forward-facing headlight cone. */
+  cone: [1280, 0, 256, 256],
+  /** Selection ring. */
+  ring: [1536, 0, 256, 256],
+  /** Destination marker. */
+  marker: [1792, 0, 256, 256],
+
+  /** Soft dot for order trails. */
+  dot: [0, 256, 256, 256],
   /** Ground robot, emissive parts only. */
   botGlow: [256, 256, 256, 256],
-  /** Forward-facing headlight cone. */
-  cone: [512, 256, 256, 256],
-  /** Selection ring. */
-  ring: [768, 256, 256, 256],
-  /** Soft dot for order trails. */
-  dot: [0, 512, 128, 128],
-  /** Destination marker. */
-  marker: [128, 512, 128, 128],
   /** Abandoned timber crate. */
-  crateTimber: [256, 512, 256, 256],
+  crateTimber: [512, 256, 256, 256],
   /** Abandoned steel box. */
-  crateSteel: [512, 512, 256, 256],
+  crateSteel: [768, 256, 256, 256],
   /** Stack of pallets. */
-  palletStack: [768, 512, 256, 256],
+  palletStack: [1024, 256, 256, 256],
+
+  /** Ground robot body. Four frames, tracks advanced a quarter pitch each. */
+  botBody0: [0, 512, 256, 256],
+  botBody1: [256, 512, 256, 256],
+  botBody2: [512, 512, 256, 256],
+  botBody3: [768, 512, 256, 256],
 } as const;
 
 export type SpriteName = keyof typeof CELLS;
@@ -88,7 +95,8 @@ export function buildAtlas(seed: number): HTMLCanvasElement {
   drawShaft(ctx);
   drawColumn(ctx, rng);
   drawBlockShadow(ctx);
-  drawBotBody(ctx, rng);
+  drawHardShadow(ctx);
+  for (let frame = 0; frame < 4; frame++) drawBotBody(ctx, makeRng(seed ^ 0x4a71), frame);
   drawBotGlow(ctx);
   drawCone(ctx);
   drawRing(ctx);
@@ -153,63 +161,131 @@ function drawShaft(ctx: CanvasRenderingContext2D): void {
   ctx.restore();
 }
 
+/**
+ * Structural column seen from above.
+ *
+ * Drawn as one solid box section on a grouted base plate, rather than the
+ * separate flanges-and-web of an H: from directly overhead that read as seven
+ * loose squares stuck together. The heavy dark line right around the base plate
+ * is what makes it sit ON the slab instead of hovering over it.
+ */
 function drawColumn(ctx: CanvasRenderingContext2D, rng: ReturnType<typeof makeRng>): void {
   const { size } = cell(ctx, 'column');
-  const s = size * 0.60;
-  const h = s / 2;
+  const plate = size * 0.78;
+  const ph = plate / 2;
+  const col = size * 0.44;
+  const ch = col / 2;
 
-  // Grouted base plate, wider than the section and slightly irregular.
-  ctx.fillStyle = '#585e63';
+  // Grout bed: a slightly irregular skirt of mortar squeezed out under the plate.
+  ctx.fillStyle = '#6a6b66';
   ctx.beginPath();
-  ctx.roundRect(-h - 22, -h - 22, s + 44, s + 44, 6);
+  for (let i = 0; i <= 22; i++) {
+    const a = (i / 22) * TAU;
+    const r = ph + 12 + Math.sin(a * 3.1 + 1.2) * 5 + rng.range(-3, 3);
+    const x = Math.cos(a) * r;
+    const y = Math.sin(a) * r;
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.closePath();
   ctx.fill();
-  ctx.strokeStyle = 'rgba(16,18,20,0.6)';
-  ctx.lineWidth = 4;
+
+  // Base plate.
+  ctx.fillStyle = '#798085';
+  ctx.beginPath();
+  ctx.roundRect(-ph, -ph, plate, plate, 4);
+  ctx.fill();
+  // Hard edge all the way round: the grounding cue.
+  ctx.strokeStyle = 'rgba(10,12,14,0.85)';
+  ctx.lineWidth = 7;
+  ctx.beginPath();
+  ctx.roundRect(-ph, -ph, plate, plate, 4);
   ctx.stroke();
-  // Holding-down bolts.
-  ctx.fillStyle = '#33383c';
+  // Light catches the top-left lip of the plate.
+  ctx.strokeStyle = 'rgba(255,255,255,0.20)';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(-ph + 2, ph - 3);
+  ctx.lineTo(-ph + 2, -ph + 2);
+  ctx.lineTo(ph - 3, -ph + 2);
+  ctx.stroke();
+
+  // Holding-down bolts, one at each corner of the plate.
   for (const sx of [-1, 1]) {
     for (const sy of [-1, 1]) {
+      const bx = sx * (ph - 15);
+      const by = sy * (ph - 15);
+      ctx.fillStyle = 'rgba(8,10,12,0.55)';
       ctx.beginPath();
-      ctx.arc(sx * (h + 11), sy * (h + 11), 6, 0, TAU);
+      ctx.arc(bx + 2, by + 2, 8, 0, TAU);
+      ctx.fill();
+      ctx.fillStyle = '#575e63';
+      ctx.beginPath();
+      ctx.arc(bx, by, 8, 0, TAU);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.22)';
+      ctx.beginPath();
+      ctx.arc(bx - 2, by - 2, 4, 0, TAU);
       ctx.fill();
     }
   }
 
-  // An H-section seen end-on: two flanges and a web, which reads far more like
-  // structural steel from above than a plain filled square.
-  const flange = s * 0.26;
-  const grad = ctx.createLinearGradient(-h, -h, h, h);
-  grad.addColorStop(0, '#a3acb3');
-  grad.addColorStop(0.45, '#7d868d');
-  grad.addColorStop(1, '#5b6369');
-  ctx.fillStyle = grad;
-  ctx.fillRect(-h, -h, s, flange);
-  ctx.fillRect(-h, h - flange, s, flange);
-  ctx.fillRect(-s * 0.16, -h, s * 0.32, s);
+  // Occlusion in the corner where the section meets the plate.
+  const ao = ctx.createRadialGradient(0, 0, ch * 0.8, 0, 0, ch * 1.75);
+  ao.addColorStop(0, 'rgba(6,8,10,0.6)');
+  ao.addColorStop(1, 'rgba(6,8,10,0)');
+  ctx.fillStyle = ao;
+  ctx.fillRect(-ph, -ph, plate, plate);
 
-  // Top-face highlight on the light side, contact dark on the other.
-  ctx.fillStyle = 'rgba(255,255,255,0.16)';
-  ctx.fillRect(-h, -h, s, 7);
-  ctx.fillRect(-s * 0.16, -h, 7, s);
-  ctx.fillStyle = 'rgba(0,0,0,0.34)';
-  ctx.fillRect(-h, h - 7, s, 7);
-  ctx.fillRect(s * 0.16 - 7, -h, 7, s);
+  // The section itself: one solid piece, lit from the top-left.
+  const face = ctx.createLinearGradient(-ch, -ch, ch, ch);
+  face.addColorStop(0, '#aab2b8');
+  face.addColorStop(0.5, '#848c92');
+  face.addColorStop(1, '#5a6167');
+  ctx.fillStyle = face;
+  ctx.beginPath();
+  ctx.roundRect(-ch, -ch, col, col, 7);
+  ctx.fill();
 
-  ctx.strokeStyle = 'rgba(14,16,18,0.75)';
-  ctx.lineWidth = 4;
-  ctx.strokeRect(-h, -h, s, flange);
-  ctx.strokeRect(-h, h - flange, s, flange);
-  ctx.strokeRect(-s * 0.16, -h, s * 0.32, s);
+  // Top face highlight and the dark side, which give it height.
+  ctx.strokeStyle = 'rgba(255,255,255,0.32)';
+  ctx.lineWidth = 6;
+  ctx.beginPath();
+  ctx.moveTo(-ch + 4, ch - 5);
+  ctx.lineTo(-ch + 4, -ch + 4);
+  ctx.lineTo(ch - 5, -ch + 4);
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(8,10,12,0.55)';
+  ctx.lineWidth = 8;
+  ctx.beginPath();
+  ctx.moveTo(ch - 4, -ch + 5);
+  ctx.lineTo(ch - 4, ch - 4);
+  ctx.lineTo(-ch + 5, ch - 4);
+  ctx.stroke();
 
-  // Rust and dirt.
-  for (let i = 0; i < 22; i++) {
-    ctx.globalAlpha = rng.range(0.08, 0.3);
+  ctx.strokeStyle = 'rgba(12,14,16,0.8)';
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.roundRect(-ch, -ch, col, col, 7);
+  ctx.stroke();
+
+  // Weld seam down the visible corner, and wear.
+  ctx.strokeStyle = 'rgba(160,168,174,0.3)';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(-ch + 10, -ch + 10);
+  ctx.lineTo(-ch + 10, ch - 10);
+  ctx.stroke();
+
+  for (let i = 0; i < 26; i++) {
+    ctx.globalAlpha = rng.range(0.07, 0.28);
     ctx.fillStyle = rng.chance(0.5) ? '#7a4520' : '#5c3116';
+    const inCol = rng.chance(0.45);
+    const reach = inCol ? ch : ph;
     ctx.beginPath();
     ctx.ellipse(
-      rng.range(-h, h), rng.range(-h, h),
-      rng.range(4, 16), rng.range(4, 14), rng.range(0, TAU), 0, TAU,
+      rng.range(-reach, reach), rng.range(-reach, reach),
+      rng.range(4, 15), rng.range(3, 12), rng.range(0, TAU), 0, TAU,
     );
     ctx.fill();
   }
@@ -239,8 +315,12 @@ function drawBlockShadow(ctx: CanvasRenderingContext2D): void {
  * Ground robot, seen from above and pointing +x. Tracked chassis, cargo deck,
  * sensor head. Drawn at high resolution so it survives close zoom.
  */
-function drawBotBody(ctx: CanvasRenderingContext2D, rng: ReturnType<typeof makeRng>): void {
-  cell(ctx, 'botBody');
+function drawBotBody(
+  ctx: CanvasRenderingContext2D,
+  rng: ReturnType<typeof makeRng>,
+  frame: number,
+): void {
+  cell(ctx, `botBody${frame}` as SpriteName);
   // Authored in a 256-wide cell for a robot 64 long x 46 wide -> scale to fit.
   const L = 100; // half-length in cell units
   const W = 72; // half-width
@@ -251,19 +331,35 @@ function drawBotBody(ctx: CanvasRenderingContext2D, rng: ReturnType<typeof makeR
     ctx.beginPath();
     ctx.roundRect(-L + 4, side * W - 26, L * 2 - 8, 52, 14);
     ctx.fill();
-    ctx.fillStyle = '#454c54';
+    ctx.fillStyle = '#4e565e';
     ctx.beginPath();
     ctx.roundRect(-L + 10, side * W - 19, L * 2 - 20, 38, 10);
     ctx.fill();
     // Track links.
-    ctx.strokeStyle = 'rgba(12,14,16,0.55)';
-    ctx.lineWidth = 5;
+    ctx.strokeStyle = 'rgba(12,14,16,0.6)';
+    ctx.lineWidth = 6;
+    const pitch = 22;
+    const offset = (frame / 4) * pitch;
+    ctx.save();
     ctx.beginPath();
-    for (let x = -L + 20; x < L - 16; x += 20) {
-      ctx.moveTo(x, side * W - 18);
-      ctx.lineTo(x, side * W + 18);
+    ctx.roundRect(-L + 10, side * W - 19, L * 2 - 20, 38, 10);
+    ctx.clip();
+    ctx.beginPath();
+    for (let x = -L - pitch + offset; x < L + pitch; x += pitch) {
+      ctx.moveTo(x, side * W - 19);
+      ctx.lineTo(x, side * W + 19);
     }
     ctx.stroke();
+    // Catch light on the trailing face of each link.
+    ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    for (let x = -L - pitch + offset + 5; x < L + pitch; x += pitch) {
+      ctx.moveTo(x, side * W - 19);
+      ctx.lineTo(x, side * W + 19);
+    }
+    ctx.stroke();
+    ctx.restore();
   }
 
   // Chassis: chamfered nose so heading is obvious from above.
@@ -275,14 +371,14 @@ function drawBotBody(ctx: CanvasRenderingContext2D, rng: ReturnType<typeof makeR
   ctx.lineTo(L - 34, W - 12);
   ctx.lineTo(-L + 6, W - 12);
   ctx.closePath();
-  ctx.fillStyle = '#949aa1';
+  ctx.fillStyle = '#a8b0b7';
   ctx.fill();
   ctx.strokeStyle = 'rgba(18,20,22,0.75)';
   ctx.lineWidth = 5;
   ctx.stroke();
 
   // Recessed cargo deck.
-  ctx.fillStyle = '#6d747b';
+  ctx.fillStyle = '#7f878e';
   ctx.beginPath();
   ctx.roundRect(-L + 22, -W + 28, 108, (W - 28) * 2, 8);
   ctx.fill();
@@ -293,7 +389,7 @@ function drawBotBody(ctx: CanvasRenderingContext2D, rng: ReturnType<typeof makeR
   ctx.fillRect(-L + 22, -W + 28, 108, 9);
 
   // Hazard flashes on the shoulders.
-  ctx.fillStyle = '#c79a2c';
+  ctx.fillStyle = '#d8a92f';
   for (let i = 0; i < 3; i++) {
     ctx.fillRect(-L + 28 + i * 22, -W + 14, 13, 11);
     ctx.fillRect(-L + 28 + i * 22, W - 25, 13, 11);
@@ -576,5 +672,25 @@ function drawPalletStack(ctx: CanvasRenderingContext2D, rng: ReturnType<typeof m
     ctx.fill();
   }
   ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+/**
+ * A tight, comparatively hard-edged shadow. Objects were reading as floating
+ * because their only shadow was a wide soft blob; real contact needs a dark
+ * core with a short penumbra directly beneath.
+ */
+function drawHardShadow(ctx: CanvasRenderingContext2D): void {
+  const { size } = cell(ctx, 'hardShadow');
+  const half = size / 2;
+  const grad = ctx.createRadialGradient(0, 0, half * 0.30, 0, 0, half * 0.86);
+  grad.addColorStop(0.0, 'rgba(0,0,0,0.92)');
+  grad.addColorStop(0.62, 'rgba(0,0,0,0.68)');
+  grad.addColorStop(0.86, 'rgba(0,0,0,0.20)');
+  grad.addColorStop(1.0, 'rgba(0,0,0,0)');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.roundRect(-half * 0.9, -half * 0.9, half * 1.8, half * 1.8, half * 0.3);
+  ctx.fill();
   ctx.restore();
 }

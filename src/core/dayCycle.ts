@@ -133,7 +133,7 @@ const KEYS: Keyframe[] = [
 ];
 
 /** Maximum distance a light pool slides from its roof opening, at the lowest sun. */
-const MAX_SUN_SLIDE = 760;
+const MAX_SUN_SLIDE = 2600;
 
 export function sampleDay(hour: number): LightingState {
   const h = ((hour % 24) + 24) % 24;
@@ -170,8 +170,8 @@ export function sampleDay(hour: number): LightingState {
     sunOffsetX: Math.cos(azimuth) * slide,
     sunOffsetY: Math.sin(azimuth) * slide * 0.55,
     sunStretch: lerp(1, 2.15, 1 - elevation),
-    shadowOffsetX: Math.cos(azimuth) * (56 + slide * 0.55),
-    shadowOffsetY: Math.sin(azimuth) * (56 + slide * 0.55) * 0.55,
+    shadowOffsetX: Math.cos(azimuth) * (95 + slide * 0.55),
+    shadowOffsetY: Math.sin(azimuth) * (95 + slide * 0.55) * 0.55,
     lampIntensity: lerp(a.lampIntensity, b.lampIntensity, t),
     gradeTint: lerpRgb(hexToRgb(a.gradeTint), hexToRgb(b.gradeTint), t),
     gradeStrength: lerp(a.gradeStrength, b.gradeStrength, t),

@@ -16,7 +16,7 @@ import { LightingPass, type Bounds } from './lighting';
 import { COMPOSITE_FRAG, FULLSCREEN_VERT } from './shaders';
 import { SpriteBatch } from './spriteBatch';
 import { WaterLayer } from './water';
-import { WORLD, WORLD_H, WORLD_W, type LevelGeometry } from '../sim/level';
+import { WORLD, WORLD_H, WORLD_W, type DockBay, type LevelGeometry } from '../sim/level';
 
 export interface FrameContext {
   camera: Camera;
@@ -74,7 +74,7 @@ export class Renderer {
   readonly waterLayer: WaterLayer;
   private lightingPass: LightingPass | null = null;
 
-  constructor(container: HTMLElement, seed: number) {
+  constructor(container: HTMLElement, seed: number, bays: DockBay[]) {
     const canvas = document.createElement('canvas');
     container.appendChild(canvas);
     this.canvas = canvas;
@@ -90,7 +90,7 @@ export class Renderer {
     if (!gl) throw new Error('WebGL2 is not available in this browser');
     this.gl = gl;
 
-    const floorCanvas = bakeFloor(seed);
+    const floorCanvas = bakeFloor(seed, bays);
     const maxTex = gl.getParameter(gl.MAX_TEXTURE_SIZE) as number;
     if (floorCanvas.width > maxTex || floorCanvas.height > maxTex) {
       throw new Error(

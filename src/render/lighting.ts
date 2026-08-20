@@ -102,8 +102,10 @@ export class LightingPass {
     // Daylight throws a hard shadow; at night the lamps surround the column
     // from several sides, so only a soft pool of occlusion survives.
     const directional = Math.min(1, lighting.sunIntensity * 0.85 + 0.15);
-    const throwLen = Math.hypot(throwX, throwY);
-    const stretch = 1 + throwLen / 150;
+    const throwLen = Math.hypot(throwX, throwY) || 1;
+    const dirX = throwX / throwLen;
+    const dirY = throwY / throwLen;
+    const stretch = 1 + throwLen / 420;
 
     for (const col of this.level.columns) {
       const x = col.x + throwX;
@@ -116,11 +118,14 @@ export class LightingPass {
         size * 2.3 * stretch, size * 2.3 * stretch,
         0, 0, 0, 0.62 * directional,
       );
-      // A tight ring of occlusion at the base. Kept light: a strong one here
-      // darkened the column itself and made it read as a hole in the floor.
+      // Hard contact shadow, pushed just far enough along the light direction
+      // that a crescent of it emerges from under the base plate. Centred, it
+      // simply darkened the top of the column — from above, a shadow directly
+      // beneath an object is hidden by that object.
       batch.pushRegion(
-        REGIONS.blockShadow, col.x, col.y, 0, size * 1.5, size * 1.5,
-        0, 0, 0, 0.22,
+        REGIONS.hardShadow,
+        col.x + dirX * size * 0.62, col.y + dirY * size * 0.62, 0,
+        size * 1.55, size * 1.55, 0, 0, 0, 0.72,
       );
     }
   }
@@ -159,6 +164,9 @@ export class LightingPass {
     if (!settings.shadows || !settings.props) return;
     const throwX = lighting.shadowOffsetX * 0.5;
     const throwY = lighting.shadowOffsetY * 0.5;
+    const len = Math.hypot(throwX, throwY) || 1;
+    const dirX = throwX / len;
+    const dirY = throwY / len;
     const directional = Math.min(1, lighting.sunIntensity * 0.85 + 0.15);
     for (const prop of this.level.props) {
       if (!visible(bounds, prop.x, prop.y, prop.size * 3)) continue;
@@ -167,8 +175,9 @@ export class LightingPass {
         prop.size * 1.5, prop.size * 1.5, 0, 0, 0, 0.55 * directional,
       );
       batch.pushRegion(
-        REGIONS.blockShadow, prop.x, prop.y, prop.angle,
-        prop.size * 1.05, prop.size * 1.05, 0, 0, 0, 0.2,
+        REGIONS.hardShadow,
+        prop.x + dirX * prop.size * 0.44, prop.y + dirY * prop.size * 0.44, prop.angle,
+        prop.size * 1.05, prop.size * 1.05, 0, 0, 0, 0.72,
       );
     }
   }

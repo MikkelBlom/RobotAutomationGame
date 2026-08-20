@@ -9,7 +9,8 @@ import { FLOOR, inWater, WATER_CLEARANCE, type Column, type Prop } from './level
  * free-form and diagonal, not stepped.
  */
 
-const CELL = 24;
+/** 60 cm cells: fine enough for a 58 cm-radius robot without bloating A*. */
+const CELL = 60;
 
 export class NavGrid {
   readonly cell = CELL;
@@ -43,7 +44,7 @@ export class NavGrid {
   }
 
   private rasterise(columns: Column[], props: Prop[], botRadius: number): void {
-    const edge = botRadius + 12;
+    const edge = botRadius + 30;
     for (let cy = 0; cy < this.rows; cy++) {
       for (let cx = 0; cx < this.cols; cx++) {
         const wx = FLOOR.x + (cx + 0.5) * CELL;

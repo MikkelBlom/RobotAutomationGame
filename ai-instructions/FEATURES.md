@@ -23,8 +23,10 @@
 | Animated order trail | Implemented | Cyan pulse along the remaining path | 2026-08-21 | — |
 | Debug/settings console | Implemented | Bottom-left, F1 toggles. Time, render, spawn, stats | 2026-08-21 | — |
 | Dev screenshot endpoint | Implemented | `window.snap()` → `.dev-shots/`, dev server only | 2026-08-21 | — |
-| **Loading dock (top-right)** | **Planned** | Black curtain normally; truck docked shows its interior | — | fog of war |
-| **Fog of war** | **Planned** | Outside-warehouse hidden; truck interior visible when docked | — | — |
+| Real-world scale (1 unit = 1 cm) | Implemented | Sized from a Euro pallet up; hall is 120 x 84 m | 2026-08-21 | — |
+| Loading dock, 4 bays | Implemented | Black seal when empty; lit trailer interior when occupied | 2026-08-21 | — |
+| Dark outside the shell | Implemented | Everything beyond the walls is black except a docked trailer | 2026-08-21 | — |
+| Track animation | Implemented | Four baked frames picked from distance driven | 2026-08-21 | — |
 | Flying robots | Planned | Must ignore terrain/congestion, cost energy | — | — |
 | Water robots | Planned | Opens the dock as usable space | — | — |
 | Props / machines on the floor | Planned | Deliberately deferred until the level is laid out | — | — |

@@ -9,9 +9,9 @@ import { buildLevelGeometry, SPAWN, type LevelGeometry } from '../sim/level';
 import { NavGrid } from '../sim/navGrid';
 
 const EDGE_PAN_MARGIN = 58;
-const PAN_SPEED = 1150;
+const PAN_SPEED = 2600;
 /** Slack around a click when picking a single robot. */
-const CLICK_PICK_RADIUS = 46;
+const CLICK_PICK_RADIUS = 110;
 
 export interface Stats {
   fps: number;
@@ -51,10 +51,11 @@ export class Game {
 
   constructor(container: HTMLElement, seed = 20260820) {
     this.container = container;
-    this.renderer = new Renderer(container, seed);
-    this.camera = new Camera(SPAWN.x, SPAWN.y, 0.85);
-    this.input = new Input(this.renderer.canvas);
+    // The bake needs the bays before anything else, so the level is built first.
     this.level = buildLevelGeometry(seed);
+    this.renderer = new Renderer(container, seed, this.level.bays);
+    this.camera = new Camera(SPAWN.x, SPAWN.y, 0.30);
+    this.input = new Input(this.renderer.canvas);
     this.renderer.setLevel(this.level);
     this.nav = new NavGrid(this.level.columns, this.level.props, BOT_RADIUS);
     this.entities = new EntityRenderer(this.bots);
@@ -99,7 +100,7 @@ export class Game {
   /** Adds robots at free positions near a point — used by the debug panel. */
   spawnBots(n: number, aroundX = SPAWN.x, aroundY = SPAWN.y): number {
     let added = 0;
-    const spread = Math.max(200, Math.sqrt(n) * 90);
+    const spread = Math.max(600, Math.sqrt(n) * 230);
     for (let i = 0; i < n; i++) {
       let placed = false;
       for (let attempt = 0; attempt < 40 && !placed; attempt++) {
@@ -279,7 +280,7 @@ export class Game {
 
     // Spread destinations so a squad does not all aim at one point and shove
     // each other around it.
-    const spacing = BOT_RADIUS * 2.7;
+    const spacing = BOT_RADIUS * 2.6;
     const perRow = Math.max(1, Math.ceil(Math.sqrt(selected.length)));
     for (let k = 0; k < selected.length; k++) {
       const col = k % perRow;

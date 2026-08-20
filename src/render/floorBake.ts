@@ -1,8 +1,11 @@
 import { makeRng, TAU, type Rng } from '../core/mathUtils';
 import { pointInPolygon } from '../sim/polygon';
 import {
+  BAY_APPROACH_DEPTH,
   DOCK_OPENING,
   FLOOR,
+  TRAILER_WIDTH,
+  type DockBay,
   HAZARD_BAND,
   WALL_THICKNESS,
   WATER_POLY,
@@ -47,6 +50,8 @@ const PALETTE = {
   hazardYellow: '#b8932e',
   hazardDark: '#2e2f2c',
   gate: '#3a3f43',
+  leveller: '#565e64',
+  trailerFloor: '#6b5637',
   gateDark: '#23272a',
   pit: '#0f141a',
 } as const;
@@ -78,18 +83,33 @@ function makeConcreteNoise(rng: Rng, size: number): HTMLCanvasElement {
   return cv;
 }
 
-export function bakeFloor(seed: number): HTMLCanvasElement {
+/**
+ * Texels per centimetre. The hall is 120 m across; baking that at one texel per
+ * centimetre would need a 12000 px texture. At this ratio one texel is a little
+ * over 3 cm, which is finer than anything visible at play zoom. The consequence
+ * is that detail authored below life size cannot land, so the floor wear below
+ * is deliberately drawn coarser than reality.
+ */
+export const BAKE_SCALE = 0.30;
+
+export function bakeFloor(seed: number, bays: DockBay[]): HTMLCanvasElement {
   const rng = makeRng(seed);
   const cv = document.createElement('canvas');
-  cv.width = Math.ceil(WORLD_W);
-  cv.height = Math.ceil(WORLD_H);
+  cv.width = Math.ceil(WORLD_W * BAKE_SCALE);
+  cv.height = Math.ceil(WORLD_H * BAKE_SCALE);
   const ctx = cv.getContext('2d');
   if (!ctx) throw new Error('2d context unavailable for floor bake');
 
   ctx.save();
+  ctx.scale(BAKE_SCALE, BAKE_SCALE);
   ctx.translate(-WORLD.x0, -WORLD.y0);
 
-  paintWallShell(ctx, rng);
+  // Everything outside the shell, including the trailer apron to the north,
+  // starts black. This is the whole of the "fog of war": you cannot see out.
+  ctx.fillStyle = '#05070a';
+  ctx.fillRect(WORLD.x0, WORLD.y0, WORLD_W, WORLD_H);
+
+  paintWallShell(ctx, rng, bays);
   paintSlab(ctx, rng);
   paintPourJoints(ctx, rng);
   paintGrime(ctx, rng);
@@ -101,6 +121,7 @@ export function bakeFloor(seed: number): HTMLCanvasElement {
   paintHazardBand(ctx, rng, cv.width, cv.height);
   paintWallContactShadow(ctx);
   paintDockMouth(ctx, rng);
+  paintLoadingBays(ctx, rng, bays);
 
   ctx.restore();
   return cv;
@@ -112,14 +133,12 @@ export function bakeFloor(seed: number): HTMLCanvasElement {
  * posts on the bay spacing, and a concrete kerb where it meets the slab —
  * which is what actually sells the thickness from directly above.
  */
-function paintWallShell(ctx: CanvasRenderingContext2D, rng: Rng): void {
-  ctx.fillStyle = PALETTE.wallDark;
-  ctx.fillRect(WORLD.x0, WORLD.y0, WORLD_W, WORLD_H);
-
+function paintWallShell(ctx: CanvasRenderingContext2D, rng: Rng, bays: DockBay[]): void {
   const t = WALL_THICKNESS;
+  const northY = FLOOR.y - t;
+
   // x, y, length, thickness, runsHorizontally, kerb side (+1 = kerb at larger coord)
   const runs: Array<[number, number, number, number, boolean, number]> = [
-    [WORLD.x0, WORLD.y0, WORLD_W, t, true, 1],                       // north
     [WORLD.x0, FLOOR.y + FLOOR.h, WORLD_W, t, true, -1],             // south
     // West is split either side of the dock opening.
     [WORLD.x0, FLOOR.y, t, DOCK_OPENING.y0 - FLOOR.y, false, 1],
@@ -127,9 +146,177 @@ function paintWallShell(ctx: CanvasRenderingContext2D, rng: Rng): void {
     [FLOOR.x + FLOOR.w, FLOOR.y, t, FLOOR.h, false, -1],             // east
   ];
 
+  // The north wall is broken by the loading bays, so it is built as the pieces
+  // between them.
+  const gaps = bays
+    .map((b) => [b.x - b.width / 2, b.x + b.width / 2] as const)
+    .sort((a, b) => a[0] - b[0]);
+  let cursor = WORLD.x0;
+  for (const [gapStart, gapEnd] of gaps) {
+    if (gapStart > cursor) runs.push([cursor, northY, gapStart - cursor, t, true, 1]);
+    cursor = gapEnd;
+  }
+  if (cursor < WORLD.x1) runs.push([cursor, northY, WORLD.x1 - cursor, t, true, 1]);
+
   for (const [x, y, w, h, horizontal, kerbSide] of runs) {
     paintWallRun(ctx, rng, x, y, w, h, horizontal, kerbSide);
   }
+}
+
+/**
+ * Trailer bays in the north wall.
+ *
+ * A bay reads as a black rubber seal in the wall when it is empty — you cannot
+ * see out through it. When a trailer is backed on, its interior is drawn out in
+ * the apron and lit from inside, so the truck is the one thing visible beyond
+ * the shell.
+ */
+function paintLoadingBays(ctx: CanvasRenderingContext2D, rng: Rng, bays: DockBay[]): void {
+  const t = WALL_THICKNESS;
+  const northY = FLOOR.y - t;
+
+  for (const bay of bays) {
+    const half = bay.width / 2;
+    const x0 = bay.x - half;
+    const x1 = bay.x + half;
+
+    if (bay.occupied) paintTrailer(ctx, rng, bay, northY);
+
+    // Rubber dock seal lining the opening. Empty bays are simply black.
+    ctx.fillStyle = bay.occupied ? '#101418' : '#04060a';
+    ctx.fillRect(x0, northY, bay.width, t);
+    ctx.fillStyle = '#0a0d11';
+    ctx.fillRect(x0, northY, 26, t);
+    ctx.fillRect(x1 - 26, northY, 26, t);
+    ctx.fillRect(x0, northY, bay.width, 22);
+
+    // Dock bumpers either side of the opening, at the face.
+    ctx.fillStyle = '#15181b';
+    ctx.fillRect(x0 - 46, FLOOR.y - 34, 46, 82);
+    ctx.fillRect(x1, FLOOR.y - 34, 46, 82);
+    ctx.fillStyle = 'rgba(255,255,255,0.07)';
+    ctx.fillRect(x0 - 46, FLOOR.y - 34, 46, 9);
+    ctx.fillRect(x1, FLOOR.y - 34, 46, 9);
+
+    // Dock leveller plate, set into the slab just inside.
+    const plateDepth = 210;
+    ctx.fillStyle = PALETTE.leveller;
+    ctx.fillRect(x0 + 12, FLOOR.y, bay.width - 24, plateDepth);
+    ctx.strokeStyle = 'rgba(12,14,16,0.7)';
+    ctx.lineWidth = 7;
+    ctx.strokeRect(x0 + 12, FLOOR.y, bay.width - 24, plateDepth);
+    // Chequer plate.
+    ctx.strokeStyle = 'rgba(255,255,255,0.07)';
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    for (let d = -bay.width; d < bay.width * 2; d += 34) {
+      ctx.moveTo(x0 + d, FLOOR.y);
+      ctx.lineTo(x0 + d + plateDepth, FLOOR.y + plateDepth);
+      ctx.moveTo(x0 + d + plateDepth, FLOOR.y);
+      ctx.lineTo(x0 + d, FLOOR.y + plateDepth);
+    }
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x0 + 12, FLOOR.y, bay.width - 24, plateDepth);
+    ctx.clip();
+    ctx.stroke();
+    ctx.restore();
+
+    // Painted approach lane: two edge lines and a bay number block.
+    ctx.strokeStyle = `rgba(184,147,46,${bay.occupied ? 0.5 : 0.34})`;
+    ctx.lineWidth = 16;
+    ctx.setLineDash([170, 110]);
+    ctx.beginPath();
+    ctx.moveTo(x0 - 30, FLOOR.y + plateDepth);
+    ctx.lineTo(x0 - 30, FLOOR.y + BAY_APPROACH_DEPTH);
+    ctx.moveTo(x1 + 30, FLOOR.y + plateDepth);
+    ctx.lineTo(x1 + 30, FLOOR.y + BAY_APPROACH_DEPTH);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Scuffed rubber where trailers have hit the bumpers.
+    for (let i = 0; i < 26; i++) {
+      ctx.globalAlpha = rng.range(0.06, 0.2);
+      ctx.fillStyle = PALETTE.oil;
+      ctx.beginPath();
+      ctx.ellipse(
+        rng.range(x0 - 90, x1 + 90), FLOOR.y + rng.range(0, 360),
+        rng.range(20, 80), rng.range(12, 48), rng.range(0, TAU), 0, TAU,
+      );
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+}
+
+/** The inside of a trailer backed onto a bay, seen through the open doors. */
+function paintTrailer(
+  ctx: CanvasRenderingContext2D,
+  rng: Rng,
+  bay: DockBay,
+  northY: number,
+): void {
+  const halfW = TRAILER_WIDTH / 2;
+  const x0 = bay.x - halfW;
+  // Runs from the wall face out into the apron; only the rear of it is on screen.
+  const y1 = northY;
+  const y0 = WORLD.y0 + 40;
+  const depth = y1 - y0;
+
+  // Body shell, slightly wider than the interior.
+  ctx.fillStyle = '#2a2f34';
+  ctx.fillRect(x0 - 22, y0 - 26, TRAILER_WIDTH + 44, depth + 26);
+
+  // Interior floor: worn hardwood decking running lengthwise.
+  ctx.fillStyle = PALETTE.trailerFloor;
+  ctx.fillRect(x0, y0, TRAILER_WIDTH, depth);
+  ctx.strokeStyle = 'rgba(30,24,16,0.55)';
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  for (let x = x0 + 26; x < x0 + TRAILER_WIDTH; x += 26) {
+    ctx.moveTo(x, y0);
+    ctx.lineTo(x, y1);
+  }
+  ctx.stroke();
+
+  // Ribbed side walls.
+  ctx.fillStyle = '#3d444a';
+  ctx.fillRect(x0 - 16, y0, 16, depth);
+  ctx.fillRect(x0 + TRAILER_WIDTH, y0, 16, depth);
+  ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  for (let y = y0; y < y1; y += 30) {
+    ctx.moveTo(x0 - 16, y);
+    ctx.lineTo(x0, y);
+    ctx.moveTo(x0 + TRAILER_WIDTH, y);
+    ctx.lineTo(x0 + TRAILER_WIDTH + 16, y);
+  }
+  ctx.stroke();
+
+  // Load restraint rails.
+  ctx.fillStyle = 'rgba(190,196,200,0.22)';
+  ctx.fillRect(x0 + 6, y0, 7, depth);
+  ctx.fillRect(x0 + TRAILER_WIDTH - 13, y0, 7, depth);
+
+  // Grime, and dark at the far end where the light does not reach.
+  for (let i = 0; i < 34; i++) {
+    ctx.globalAlpha = rng.range(0.05, 0.2);
+    ctx.fillStyle = rng.chance(0.5) ? '#241d13' : '#7a4520';
+    ctx.beginPath();
+    ctx.ellipse(
+      rng.range(x0, x0 + TRAILER_WIDTH), rng.range(y0, y1),
+      rng.range(14, 60), rng.range(9, 38), rng.range(0, TAU), 0, TAU,
+    );
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  const fade = ctx.createLinearGradient(0, y0, 0, y0 + depth * 0.75);
+  fade.addColorStop(0, 'rgba(4,6,9,0.92)');
+  fade.addColorStop(1, 'rgba(4,6,9,0)');
+  ctx.fillStyle = fade;
+  ctx.fillRect(x0 - 22, y0 - 26, TRAILER_WIDTH + 44, depth);
 }
 
 function paintWallRun(
@@ -155,7 +342,7 @@ function paintWallRun(
   ctx.fillRect(x, y, w, h);
 
   // Cladding sheets: each weathered slightly differently.
-  const sheet = 330;
+  const sheet = 1200;
   for (let a = alongStart; a < alongStart + runLength; a += sheet) {
     ctx.globalAlpha = rng.range(0.05, 0.14);
     ctx.fillStyle = rng.chance(0.5) ? PALETTE.wallLight : PALETTE.wallDark;
@@ -168,7 +355,7 @@ function paintWallRun(
   ctx.strokeStyle = 'rgba(0,0,0,0.24)';
   ctx.lineWidth = 2;
   ctx.beginPath();
-  for (let a = alongStart; a < alongStart + runLength; a += 15) {
+  for (let a = alongStart; a < alongStart + runLength; a += 55) {
     if (horizontal) {
       ctx.moveTo(a, y);
       ctx.lineTo(a, y + h);
@@ -181,7 +368,7 @@ function paintWallRun(
   // Catch-light on the opposite side of each rib.
   ctx.strokeStyle = 'rgba(255,255,255,0.07)';
   ctx.beginPath();
-  for (let a = alongStart + 3; a < alongStart + runLength; a += 15) {
+  for (let a = alongStart + 12; a < alongStart + runLength; a += 55) {
     if (horizontal) {
       ctx.moveTo(a, y);
       ctx.lineTo(a, y + h);
@@ -208,9 +395,9 @@ function paintWallRun(
   ctx.stroke();
 
   // Structural posts on the bay spacing, standing proud of the cladding.
-  const bay = 560;
+  const bay = 1100;
   for (let a = alongStart + bay / 2; a < alongStart + runLength; a += bay) {
-    const postW = 46;
+    const postW = 150;
     ctx.fillStyle = PALETTE.wallLight;
     if (horizontal) ctx.fillRect(a - postW / 2, y + 6, postW, h - 12);
     else ctx.fillRect(x + 6, a - postW / 2, w - 12, postW);
@@ -225,8 +412,8 @@ function paintWallRun(
   }
 
   // Rust bleeding from the fixings.
-  for (let i = 0; i < 46; i++) {
-    ctx.globalAlpha = rng.range(0.07, 0.26);
+  for (let i = 0; i < 34; i++) {
+    ctx.globalAlpha = rng.range(0.05, 0.17);
     ctx.fillStyle = rng.chance(0.5) ? PALETTE.rust : PALETTE.rustDeep;
     const a = rng.range(alongStart, alongStart + runLength);
     const across = rng.range(0, thickness);
@@ -235,8 +422,8 @@ function paintWallRun(
     ctx.beginPath();
     ctx.ellipse(
       px, py,
-      horizontal ? rng.range(5, 16) : rng.range(9, 30),
-      horizontal ? rng.range(9, 30) : rng.range(5, 16),
+      horizontal ? rng.range(18, 60) : rng.range(34, 112),
+      horizontal ? rng.range(34, 112) : rng.range(18, 60),
       0, 0, TAU,
     );
     ctx.fill();
@@ -245,7 +432,7 @@ function paintWallRun(
 
   // Concrete kerb along the inner face — the thing that actually reads as
   // "this wall has depth" when you are looking straight down at it.
-  const kerb = 16;
+  const kerb = 55;
   const kx = horizontal ? x : kerbSide > 0 ? x + w - kerb : x;
   const ky = horizontal ? (kerbSide > 0 ? y + h - kerb : y) : y;
   const kw = horizontal ? w : kerb;
@@ -270,15 +457,15 @@ function paintSlab(ctx: CanvasRenderingContext2D, rng: Rng): void {
 
   // Broad tonal zones so the slab is not flat. Low contrast on purpose —
   // anything stronger reads as cloud cover rather than worn concrete.
-  for (let i = 0; i < 170; i++) {
-    ctx.globalAlpha = rng.range(0.014, 0.042);
+  for (let i = 0; i < 380; i++) {
+    ctx.globalAlpha = rng.range(0.010, 0.028);
     ctx.fillStyle = rng.chance(0.5) ? PALETTE.concreteLight : PALETTE.concreteDark;
     ctx.beginPath();
     ctx.ellipse(
       rng.range(FLOOR.x, FLOOR.x + FLOOR.w),
       rng.range(FLOOR.y, FLOOR.y + FLOOR.h),
-      rng.range(70, 250),
-      rng.range(50, 170),
+      rng.range(260, 940),
+      rng.range(190, 640),
       rng.range(0, TAU),
       0,
       TAU,
@@ -312,22 +499,22 @@ function paintPourJoints(ctx: CanvasRenderingContext2D, rng: Rng): void {
   ctx.lineCap = 'round';
 
   // Long pours run the length of the hall; cross joints are shorter and rarer.
-  for (let x = FLOOR.x + rng.range(300, 520); x < FLOOR.x + FLOOR.w; x += rng.range(430, 720)) {
+  for (let x = FLOOR.x + rng.range(1100, 1900); x < FLOOR.x + FLOOR.w; x += rng.range(1600, 2700)) {
     ctx.globalAlpha = rng.range(0.10, 0.20);
-    ctx.lineWidth = rng.range(2, 3.4);
+    ctx.lineWidth = rng.range(7, 13);
     ctx.beginPath();
     ctx.moveTo(x, FLOOR.y);
-    ctx.lineTo(x + rng.range(-14, 14), FLOOR.y + FLOOR.h);
+    ctx.lineTo(x + rng.range(-52, 52), FLOOR.y + FLOOR.h);
     ctx.stroke();
   }
-  for (let y = FLOOR.y + rng.range(360, 620); y < FLOOR.y + FLOOR.h; y += rng.range(520, 860)) {
-    const x0 = FLOOR.x + (rng.chance(0.5) ? 0 : rng.range(200, 900));
-    const x1 = FLOOR.x + FLOOR.w - (rng.chance(0.5) ? 0 : rng.range(200, 900));
+  for (let y = FLOOR.y + rng.range(1350, 2300); y < FLOOR.y + FLOOR.h; y += rng.range(1950, 3200)) {
+    const x0 = FLOOR.x + (rng.chance(0.5) ? 0 : rng.range(750, 3400));
+    const x1 = FLOOR.x + FLOOR.w - (rng.chance(0.5) ? 0 : rng.range(750, 3400));
     ctx.globalAlpha = rng.range(0.08, 0.16);
-    ctx.lineWidth = rng.range(1.8, 3);
+    ctx.lineWidth = rng.range(6, 11);
     ctx.beginPath();
     ctx.moveTo(x0, y);
-    ctx.lineTo(x1, y + rng.range(-12, 12));
+    ctx.lineTo(x1, y + rng.range(-45, 45));
     ctx.stroke();
   }
   ctx.globalAlpha = 1;
@@ -342,16 +529,16 @@ function paintGrime(ctx: CanvasRenderingContext2D, rng: Rng): void {
 
   // Dirt builds up along the walls where nothing sweeps.
   const edges: Array<[number, number, number, number]> = [
-    [FLOOR.x, FLOOR.y, FLOOR.w, 150],
-    [FLOOR.x, FLOOR.y + FLOOR.h - 150, FLOOR.w, 150],
-    [FLOOR.x, FLOOR.y, 150, FLOOR.h],
-    [FLOOR.x + FLOOR.w - 150, FLOOR.y, 150, FLOOR.h],
+    [FLOOR.x, FLOOR.y, FLOOR.w, 560],
+    [FLOOR.x, FLOOR.y + FLOOR.h - 560, FLOOR.w, 560],
+    [FLOOR.x, FLOOR.y, 560, FLOOR.h],
+    [FLOOR.x + FLOOR.w - 560, FLOOR.y, 560, FLOOR.h],
   ];
   const gradients = [
-    ctx.createLinearGradient(0, FLOOR.y, 0, FLOOR.y + 150),
-    ctx.createLinearGradient(0, FLOOR.y + FLOOR.h, 0, FLOOR.y + FLOOR.h - 150),
-    ctx.createLinearGradient(FLOOR.x, 0, FLOOR.x + 150, 0),
-    ctx.createLinearGradient(FLOOR.x + FLOOR.w, 0, FLOOR.x + FLOOR.w - 150, 0),
+    ctx.createLinearGradient(0, FLOOR.y, 0, FLOOR.y + 560),
+    ctx.createLinearGradient(0, FLOOR.y + FLOOR.h, 0, FLOOR.y + FLOOR.h - 560),
+    ctx.createLinearGradient(FLOOR.x, 0, FLOOR.x + 560, 0),
+    ctx.createLinearGradient(FLOOR.x + FLOOR.w, 0, FLOOR.x + FLOOR.w - 560, 0),
   ];
   for (let i = 0; i < 4; i++) {
     gradients[i].addColorStop(0, 'rgba(60,56,46,0.42)');
@@ -361,15 +548,15 @@ function paintGrime(ctx: CanvasRenderingContext2D, rng: Rng): void {
   }
 
   // General blotchy filth.
-  for (let i = 0; i < 260; i++) {
-    ctx.globalAlpha = rng.range(0.02, 0.07);
+  for (let i = 0; i < 420; i++) {
+    ctx.globalAlpha = rng.range(0.012, 0.032);
     ctx.fillStyle = PALETTE.grime;
     ctx.beginPath();
     ctx.ellipse(
       rng.range(FLOOR.x, FLOOR.x + FLOOR.w),
       rng.range(FLOOR.y, FLOOR.y + FLOOR.h),
-      rng.range(40, 200),
-      rng.range(28, 130),
+      rng.range(150, 750),
+      rng.range(105, 490),
       rng.range(0, TAU),
       0,
       TAU,
@@ -386,17 +573,17 @@ function paintTrafficWear(ctx: CanvasRenderingContext2D, rng: Rng): void {
   ctx.rect(FLOOR.x, FLOOR.y, FLOOR.w, FLOOR.h);
   ctx.clip();
   ctx.lineCap = 'round';
-  for (let i = 0; i < 130; i++) {
+  for (let i = 0; i < 420; i++) {
     const x = rng.range(FLOOR.x, FLOOR.x + FLOOR.w);
     const y = rng.range(FLOOR.y, FLOOR.y + FLOOR.h);
     const angle = rng.chance(0.6) ? rng.range(-0.12, 0.12) : Math.PI / 2 + rng.range(-0.12, 0.12);
-    const len = rng.range(60, 260);
+    const len = rng.range(400, 1600);
     ctx.save();
     ctx.translate(x, y);
     ctx.rotate(angle);
     ctx.globalAlpha = rng.range(0.04, 0.13);
     ctx.strokeStyle = PALETTE.oil;
-    ctx.lineWidth = rng.range(4, 13);
+    ctx.lineWidth = rng.range(14, 46);
     ctx.beginPath();
     ctx.moveTo(-len / 2, 0);
     ctx.lineTo(len / 2, 0);
@@ -413,22 +600,22 @@ function paintPuddlesAndOil(ctx: CanvasRenderingContext2D, rng: Rng): void {
   ctx.rect(FLOOR.x, FLOOR.y, FLOOR.w, FLOOR.h);
   ctx.clip();
 
-  for (let i = 0; i < 52; i++) {
+  for (let i = 0; i < 80; i++) {
     const x = rng.range(FLOOR.x + 60, FLOOR.x + FLOOR.w - 60);
     const y = rng.range(FLOOR.y + 60, FLOOR.y + FLOOR.h - 60);
-    const rx = rng.range(20, 62);
+    const rx = rng.range(90, 320);
     const ry = rx * rng.range(0.4, 0.75);
     const rot = rng.range(0, TAU);
 
     // Damp halo first, tight and faint — a wide soft one reads as fog.
-    ctx.globalAlpha = 0.07;
+    ctx.globalAlpha = 0.045;
     ctx.fillStyle = PALETTE.damp;
     ctx.beginPath();
     ctx.ellipse(x, y, rx * 1.22, ry * 1.22, rot, 0, TAU);
     ctx.fill();
 
     // The standing water itself: small, dark, defined.
-    ctx.globalAlpha = rng.range(0.34, 0.58);
+    ctx.globalAlpha = rng.range(0.20, 0.38);
     ctx.fillStyle = PALETTE.puddle;
     ctx.beginPath();
     ctx.ellipse(x, y, rx, ry, rot, 0, TAU);
@@ -437,16 +624,16 @@ function paintPuddlesAndOil(ctx: CanvasRenderingContext2D, rng: Rng): void {
     // A thin lit rim on one side only, so it reads as a depression.
     ctx.globalAlpha = 0.16;
     ctx.strokeStyle = PALETTE.puddleRim;
-    ctx.lineWidth = 1.6;
+    ctx.lineWidth = 7;
     ctx.beginPath();
     ctx.ellipse(x, y, rx, ry, rot, Math.PI * 0.85, Math.PI * 1.95);
     ctx.stroke();
   }
 
-  for (let i = 0; i < 40; i++) {
+  for (let i = 0; i < 70; i++) {
     const x = rng.range(FLOOR.x + 40, FLOOR.x + FLOOR.w - 40);
     const y = rng.range(FLOOR.y + 40, FLOOR.y + FLOOR.h - 40);
-    const r = rng.range(18, 70);
+    const r = rng.range(70, 280);
     for (let k = 0; k < rng.int(3, 6); k++) {
       ctx.globalAlpha = rng.range(0.1, 0.3);
       ctx.fillStyle = PALETTE.oil;
@@ -473,19 +660,19 @@ function paintCracks(ctx: CanvasRenderingContext2D, rng: Rng): void {
   ctx.rect(FLOOR.x, FLOOR.y, FLOOR.w, FLOOR.h);
   ctx.clip();
   ctx.lineCap = 'round';
-  for (let i = 0; i < 80; i++) {
+  for (let i = 0; i < 190; i++) {
     let x = rng.range(FLOOR.x, FLOOR.x + FLOOR.w);
     let y = rng.range(FLOOR.y, FLOOR.y + FLOOR.h);
     let angle = rng.range(0, TAU);
-    ctx.globalAlpha = rng.range(0.12, 0.34);
+    ctx.globalAlpha = rng.range(0.07, 0.18);
     ctx.strokeStyle = PALETTE.crack;
-    ctx.lineWidth = rng.range(0.8, 2.4);
+    ctx.lineWidth = rng.range(2.5, 6);
     ctx.beginPath();
     ctx.moveTo(x, y);
     for (let k = 0, n = rng.int(3, 8); k < n; k++) {
       angle += rng.range(-0.9, 0.9);
-      x += Math.cos(angle) * rng.range(30, 100);
-      y += Math.sin(angle) * rng.range(30, 100);
+      x += Math.cos(angle) * rng.range(120, 420);
+      y += Math.sin(angle) * rng.range(120, 420);
       ctx.lineTo(x, y);
     }
     ctx.stroke();
@@ -513,7 +700,7 @@ function paintDampRing(ctx: CanvasRenderingContext2D): void {
   ctx.save();
   ctx.lineJoin = 'round';
   for (let i = 0; i < 5; i++) {
-    const width = 200 - i * 36;
+    const width = 760 - i * 135;
     ctx.globalAlpha = 0.05;
     ctx.strokeStyle = PALETTE.damp;
     ctx.lineWidth = width;
@@ -542,7 +729,7 @@ function paintHazardBand(
   _height: number,
 ): void {
   const BAND = HAZARD_BAND;
-  const stripe = 34;
+  const stripe = 62;
   const pitch = stripe * 2;
   const count = WATER_POLY.length / 2;
 
@@ -679,7 +866,7 @@ function paintHazardBand(
     ctx.beginPath();
     ctx.ellipse(
       bx + nx[i] * rng.range(0, BAND), by + ny[i] * rng.range(0, BAND),
-      rng.range(6, 26), rng.range(4, 14), rng.range(0, TAU), 0, TAU,
+      rng.range(24, 100), rng.range(16, 54), rng.range(0, TAU), 0, TAU,
     );
     ctx.fill();
   }
@@ -689,7 +876,7 @@ function paintHazardBand(
   // A dark lip between the paint and the water, so the band has an edge.
   ctx.lineJoin = 'round';
   ctx.strokeStyle = 'rgba(10,12,14,0.55)';
-  ctx.lineWidth = 5;
+  ctx.lineWidth = 16;
   tracePolygon(ctx, WATER_POLY);
   ctx.stroke();
 
@@ -710,23 +897,23 @@ function paintDockMouth(ctx: CanvasRenderingContext2D, rng: Rng): void {
   // Cut ends of the wall on either side of the opening, with a steel edge.
   for (const [jy, dir] of [[y0, -1], [y1, 1]] as Array<[number, number]>) {
     ctx.fillStyle = PALETTE.wallLight;
-    ctx.fillRect(x0, jy + (dir < 0 ? -18 : 0), x1 - x0, 18);
+    ctx.fillRect(x0, jy + (dir < 0 ? -62 : 0), x1 - x0, 62);
     ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    ctx.fillRect(x0, jy + (dir < 0 ? -4 : 14), x1 - x0, 4);
+    ctx.fillRect(x0, jy + (dir < 0 ? -14 : 48), x1 - x0, 14);
     // Fender posts protecting the corner from hulls.
-    for (let x = x0 + 22; x < x1; x += 46) {
+    for (let x = x0 + 80; x < x1; x += 165) {
       ctx.fillStyle = PALETTE.gateDark;
       ctx.beginPath();
-      ctx.arc(x, jy + dir * -13, 9, 0, TAU);
+      ctx.arc(x, jy + dir * -46, 32, 0, TAU);
       ctx.fill();
     }
-    for (let i = 0; i < 26; i++) {
+    for (let i = 0; i < 60; i++) {
       ctx.globalAlpha = rng.range(0.1, 0.32);
       ctx.fillStyle = rng.chance(0.5) ? PALETTE.rust : PALETTE.rustDeep;
       ctx.beginPath();
       ctx.ellipse(
-        rng.range(x0, x1), jy + dir * -rng.range(0, 20),
-        rng.range(4, 15), rng.range(3, 10), 0, 0, TAU,
+        rng.range(x0, x1), jy + dir * -rng.range(0, 72),
+        rng.range(14, 54), rng.range(11, 36), 0, 0, TAU,
       );
       ctx.fill();
     }

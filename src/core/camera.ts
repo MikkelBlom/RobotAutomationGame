@@ -16,8 +16,8 @@ export class Camera {
   zoom = 1;
   targetZoom = 1;
 
-  readonly minZoom = 0.18;
-  readonly maxZoom = 3.2;
+  readonly minZoom = 0.05;
+  readonly maxZoom = 2.4;
 
   private readonly view = new Float32Array(9);
 

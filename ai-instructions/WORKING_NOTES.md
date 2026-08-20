@@ -2,6 +2,17 @@
 
 ## Architecture decisions (settled — do not re-litigate without reason)
 
+**One world unit is one centimetre, and everything is sized from something
+real.** The Euro pallet (120 x 80) is the module: the robot is 165 x 105 so its
+bed takes one, columns are 60 cm on an 11 m bay, the hall is 120 x 84 m. Before
+this the scale was arbitrary and the proportions felt wrong — the hall read as a
+room. If you add anything, size it from a real object.
+
+**The floor bake renders at 0.30 texels per centimetre** (`BAKE_SCALE`). A 120 m
+hall at 1 texel/cm would be a 12000 px texture. One texel is ~3.3 cm, so detail
+authored below life size cannot land; floor wear is deliberately drawn coarser
+than reality.
+
 **Raw WebGL2, no engine.** Canvas2D measured 30fps at ~1,750 robots because it
 issues one draw call per sprite. Instanced WebGL2 measured ~26,000 robots at
 30fps in the same hall. Pixi/Phaser were considered and rejected: the art is
@@ -29,6 +40,20 @@ string-pulled against line-of-sight. Robots are never snapped to it. This
 matters — Mikkel pushed back hard on anything that reads as a grid.
 
 ## Things tried and rejected
+
+- **Contact shadows centred on the object.** In a top-down view a shadow
+  directly beneath something is hidden BY that thing, so a centred shadow drawn
+  into the light buffer just darkens the object itself — crates got a dark blob
+  painted on their lids and the robot turned into a smudge. Contact shadows are
+  now pushed along the light direction by a fraction of the object's size, so
+  only a crescent emerges.
+- **Column drawn as an H-section.** From directly overhead the two flanges and
+  the web read as seven loose squares stuck together. It is now one solid box
+  section on a grouted base plate, and the heavy dark line around that plate is
+  what actually stops it looking like it hovers.
+- **Scaling detail counts and sizes together** when the hall grew 3.7x. Both
+  went up, so the slab turned into leopard print. Counts should rise roughly
+  with area, sizes only with what is actually visible at play zoom.
 
 - **Water from a scrolling noise texture.** Tiled visibly at any usable scale.
   Replaced with crossed directional sines through a domain warp, which has no
@@ -84,6 +109,12 @@ matters — Mikkel pushed back hard on anything that reads as a grid.
 - **`grow()` in `BotPool`** reallocates every column and casts away
   `readonly`. Works, but it is the ugliest code in the sim. Pre-sizing the pool
   is the cheap alternative.
+- **The simulation is now the bottleneck, not rendering.** At 3,000 robots:
+  sim 2.05 ms/tick, draw 1.61 ms/frame, ~6.5k sprites after culling. That
+  extrapolates to roughly 18 ms/tick at 26,000, which matches the 30fps Mikkel
+  measured. Rendering has plenty of headroom; the next perf work belongs in
+  `BotPool.update` (separation is the expensive half), or in moving the sim to a
+  worker on a fixed tick.
 - **Trail dots are capped at 4,000.** With a very large selection the trail
   silently truncates. Fine for now, but it is a silent cap.
 - **`requestAnimationFrame` does not fire in a hidden/uncomposited tab**, so any

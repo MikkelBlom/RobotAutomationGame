@@ -10,10 +10,12 @@ import type { NavGrid } from './navGrid';
  * pointers and feeding the garbage collector.
  */
 
-export const BOT_LENGTH = 132;
-export const BOT_WIDTH = 90;
+/** 165 x 105 cm: a real pallet-moving AMR. Its bed takes a 120x80 pallet. */
+export const BOT_LENGTH = 165;
+export const BOT_WIDTH = 105;
 /** Collision radius — a little tighter than the hull so they can pass closely. */
-export const BOT_RADIUS = 46;
+/** Collision radius, between half-width and half-length. */
+export const BOT_RADIUS = 58;
 
 export const BotState = { Idle: 0, Moving: 1 } as const;
 
@@ -40,6 +42,8 @@ export class BotPool {
   /** Smoothed travel speed, for track animation and light dimming. */
   readonly velocity: Float32Array;
   readonly phase: Float32Array;
+  /** Distance driven, in cm. Drives the track animation frame. */
+  readonly odometer: Float32Array;
 
   /**
    * Only robots actually under orders carry a path, and you command squads, not
@@ -55,7 +59,7 @@ export class BotPool {
   private readonly queues = new Map<number, number[]>();
 
   // Spatial hash for neighbour lookups during separation.
-  private readonly hashCell = 72;
+  private readonly hashCell = 190;
   private readonly buckets = new Map<number, number[]>();
 
   constructor(capacity = 4096) {
@@ -71,6 +75,7 @@ export class BotPool {
     this.selected = new Uint8Array(capacity);
     this.velocity = new Float32Array(capacity);
     this.phase = new Float32Array(capacity);
+    this.odometer = new Float32Array(capacity);
   }
 
   spawn(x: number, y: number, angle = 0): number {
@@ -79,14 +84,15 @@ export class BotPool {
     this.x[i] = x;
     this.y[i] = y;
     this.angle[i] = angle;
-    this.speed[i] = 118;
-    this.turnRate[i] = 2.9;
+    this.speed[i] = 165;   // 1.65 m/s, typical for a warehouse AMR
+    this.turnRate[i] = 1.8;
     this.goalX[i] = x;
     this.goalY[i] = y;
     this.state[i] = BotState.Idle;
     this.selected[i] = 0;
     this.velocity[i] = 0;
     this.phase[i] = (i * 0.618) % 1 * TAU;
+    this.odometer[i] = 0;
     return i;
   }
 
@@ -109,6 +115,7 @@ export class BotPool {
     (this as { selected: Uint8Array }).selected = copy(this.selected, (n) => new Uint8Array(n));
     (this as { velocity: Float32Array }).velocity = copy(this.velocity, (n) => new Float32Array(n));
     (this as { phase: Float32Array }).phase = copy(this.phase, (n) => new Float32Array(n));
+    (this as { odometer: Float32Array }).odometer = copy(this.odometer, (n) => new Float32Array(n));
     this.capacity = next;
   }
 
@@ -246,7 +253,7 @@ export class BotPool {
 
     // Advance through waypoints we have effectively reached. Intermediate ones
     // get a generous radius so corners are rounded rather than pivoted on.
-    const arrive = isLast ? 6 : 30;
+    const arrive = isLast ? 14 : 90;
     let dx = wx - this.x[i];
     let dy = wy - this.y[i];
     let dist = Math.hypot(dx, dy);
@@ -262,7 +269,7 @@ export class BotPool {
       if (path.cursor >= pts.length - 2) break;
     }
 
-    if (path.cursor >= pts.length - 2 && dist < 6) {
+    if (path.cursor >= pts.length - 2 && dist < 14) {
       this.paths.delete(i);
       this.velocity[i] = 0;
       // Roll straight on to the next queued waypoint, if the player stacked one.
@@ -277,11 +284,12 @@ export class BotPool {
 
     // Slow into turns, and ease to a stop at the final waypoint.
     const alignment = Math.max(0, 1 - Math.abs(delta) / 1.4);
-    const approach = isLast ? Math.min(1, dist / 90) : 1;
+    const approach = isLast ? Math.min(1, dist / 260) : 1;
     const target = this.speed[i] * alignment * approach;
     this.velocity[i] += (target - this.velocity[i]) * Math.min(1, dt * 5);
 
     const step = this.velocity[i] * dt;
+    this.odometer[i] += step;
     const nx = this.x[i] + Math.cos(this.angle[i]) * step;
     const ny = this.y[i] + Math.sin(this.angle[i]) * step;
 
