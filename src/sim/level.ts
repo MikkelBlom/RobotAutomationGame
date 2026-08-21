@@ -25,7 +25,7 @@ import { distanceToEdges, pointInPolygon, polygonBounds, type Polygon } from './
  */
 
 /** Clad steel wall with its structural frame inside it. */
-export const WALL_THICKNESS = 190;
+export const WALL_THICKNESS = 260;
 
 /** Interior floor slab: 120 m x 84 m. */
 export const FLOOR = { x: 0, y: 0, w: 12000, h: 8400 } as const;
@@ -54,10 +54,25 @@ export const WORLD_W = WORLD.x1 - WORLD.x0;
 export const WORLD_H = WORLD.y1 - WORLD.y0;
 
 /**
+ * The building itself: floor plus its wall ring, with no apron.
+ *
+ * Walls must be positioned from THIS, never from WORLD. WORLD used to be the
+ * shell, then aprons were added on every side and it silently became something
+ * bigger — which put the west wall out in the dark apron where it was invisible,
+ * and ran the north and south walls past both corners.
+ */
+export const SHELL = {
+  x0: FLOOR.x - WALL_THICKNESS,
+  y0: FLOOR.y - WALL_THICKNESS,
+  x1: FLOOR.x + FLOOR.w + WALL_THICKNESS,
+  y1: FLOOR.y + FLOOR.h + WALL_THICKNESS,
+} as const;
+
+/**
  * The flooded dock. Engineered excavation: straight runs on the axes, every
  * corner taken off at exactly 45 degrees (each diagonal below has |dx| = |dy|).
  *
- * 64 m long, 34 m wide: under two ninths of the floor. The dock is
+ * 64 m long, 31 m wide, centred on the hall: under two ninths of the floor. The dock is
  * a corner of this building, not its subject — most of the hall has to stay
  * clear for the automation that goes in it.
  *
@@ -70,30 +85,37 @@ export const WORLD_H = WORLD.y1 - WORLD.y0;
  * The jetties are floor, not water; the polygon bends around them.
  */
 export const WATER_POLY: Polygon = [
-  -WALL_THICKNESS, 3500,
-  1800, 3500,
-  2300, 4000,   // 45 — north jetty, west face
-  4300, 4000,   //      north jetty nose, 20 m
-  4800, 3500,   // 45 — north jetty, east face
-  5700, 3500,
-  6200, 4000,   // 45 — NE corner
-  6200, 6400,
-  5700, 6900,   // 45 — SE corner
-  4800, 6900,
-  4300, 6400,   // 45 — south jetty, east face
-  2300, 6400,   //      south jetty nose
-  1800, 6900,   // 45 — south jetty, west face
-  -WALL_THICKNESS, 6900,
+  -WALL_THICKNESS, 2650,
+  1800, 2650,
+  2300, 3150,   // 45 — north jetty, west face
+  4300, 3150,   //      north jetty nose, 20 m
+  4800, 2650,   // 45 — north jetty, east face
+  5700, 2650,
+  6200, 3150,   // 45 — NE corner
+  6200, 5250,
+  5700, 5750,   // 45 — SE corner
+  4800, 5750,
+  4300, 5250,   // 45 — south jetty, east face
+  2300, 5250,   //      south jetty nose
+  1800, 5750,   // 45 — south jetty, west face
+  -WALL_THICKNESS, 5750,
 ];
 
 /** Clear channel between the jetty noses — this is the berth. */
-export const BERTH = { y0: 4000, y1: 6400, x0: 2300, x1: 4300 } as const;
+export const BERTH = { y0: 3150, y1: 5250, x0: 2300, x1: 4300 } as const;
 
 /** Vertical span of the opening where the dock passes through the west wall. */
-export const DOCK_OPENING = { y0: 3500, y1: 6900 } as const;
+export const DOCK_OPENING = { y0: 2650, y1: 5750 } as const;
 
-/** Where the channel meets open water. Swell enters here. */
-export const DOCK_MOUTH_X = WORLD.x0;
+/**
+ * Where the channel meets open water, and where it fades to black.
+ *
+ * This is the water's own west extent — the outer face of the wall — not
+ * WORLD.x0. Once aprons were added on every side, WORLD.x0 moved 5 m further
+ * out and the fade ended up entirely off the end of the water, so the channel
+ * simply stopped dead against the wall with no darkening at all.
+ */
+export const DOCK_MOUTH_X = SHELL.x0;
 
 export const WATER_BOUNDS = polygonBounds(WATER_POLY);
 
@@ -202,16 +224,16 @@ export function buildLevelGeometry(seed: number): LevelGeometry {
 
   // Columns stand in rows along the structural bays — the two wall lines plus a
   // spine down the middle. A full lattice made the whole hall read as a grid.
-  const bayRows = [950, 4250, 7480];
+  const bayRows = [1100, 4200, 7300];
   for (let r = 0; r < bayRows.length; r++) {
-    const spacing = r === 1 ? 1300 : 1100;
-    for (let x = 1200; x < FLOOR.w - 700; x += spacing) {
+    const spacing = 1900;
+    for (let x = 1400; x < FLOOR.w - 900; x += spacing) {
       const cx = x + rng.range(-40, 40);
       const cy = bayRows[r] + rng.range(-35, 35);
-      if (inWater(cx, cy, 420)) continue;
+      if (inWater(cx, cy, 520)) continue;
       // Keep the approach to the loading bays clear.
       if (cy < BAY_APPROACH_DEPTH && bays.some((b) => Math.abs(cx - b.x) < 700)) continue;
-      columns.push({ x: cx, y: cy, size: rng.range(115, 135), rust: rng.next() });
+      columns.push({ x: cx, y: cy, size: rng.range(185, 210), rust: rng.next() });
     }
   }
 

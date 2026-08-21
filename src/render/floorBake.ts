@@ -2,6 +2,7 @@ import { makeRng, TAU, type Rng } from '../core/mathUtils';
 import { pointInPolygon } from '../sim/polygon';
 import {
   BAY_APPROACH_DEPTH,
+  SHELL,
   TRAILER_DEPTH,
   DOCK_OPENING,
   FLOOR,
@@ -150,14 +151,18 @@ export function bakeFloor(
  */
 function paintWallShell(ctx: CanvasRenderingContext2D, rng: Rng, bays: DockBay[]): void {
   const t = WALL_THICKNESS;
-  const northY = FLOOR.y - t;
+  const northY = SHELL.y0;
+  const shellW = SHELL.x1 - SHELL.x0;
 
+  // Every run is positioned from SHELL, the building itself. Using WORLD here
+  // put the west wall out in the apron and overhung the north and south walls
+  // past both corners.
   // x, y, length, thickness, runsHorizontally, kerb side (+1 = kerb at larger coord)
   const runs: Array<[number, number, number, number, boolean, number]> = [
-    [WORLD.x0, FLOOR.y + FLOOR.h, WORLD_W, t, true, -1],             // south
+    [SHELL.x0, FLOOR.y + FLOOR.h, shellW, t, true, -1],              // south
     // West is split either side of the dock opening.
-    [WORLD.x0, FLOOR.y, t, DOCK_OPENING.y0 - FLOOR.y, false, 1],
-    [WORLD.x0, DOCK_OPENING.y1, t, FLOOR.y + FLOOR.h - DOCK_OPENING.y1, false, 1],
+    [SHELL.x0, FLOOR.y, t, DOCK_OPENING.y0 - FLOOR.y, false, 1],
+    [SHELL.x0, DOCK_OPENING.y1, t, FLOOR.y + FLOOR.h - DOCK_OPENING.y1, false, 1],
     [FLOOR.x + FLOOR.w, FLOOR.y, t, FLOOR.h, false, -1],             // east
   ];
 
@@ -166,12 +171,12 @@ function paintWallShell(ctx: CanvasRenderingContext2D, rng: Rng, bays: DockBay[]
   const gaps = bays
     .map((b) => [b.x - b.width / 2, b.x + b.width / 2] as const)
     .sort((a, b) => a[0] - b[0]);
-  let cursor = WORLD.x0;
+  let cursor = SHELL.x0;
   for (const [gapStart, gapEnd] of gaps) {
     if (gapStart > cursor) runs.push([cursor, northY, gapStart - cursor, t, true, 1]);
     cursor = gapEnd;
   }
-  if (cursor < WORLD.x1) runs.push([cursor, northY, WORLD.x1 - cursor, t, true, 1]);
+  if (cursor < SHELL.x1) runs.push([cursor, northY, SHELL.x1 - cursor, t, true, 1]);
 
   for (const [x, y, w, h, horizontal, kerbSide] of runs) {
     paintWallRun(ctx, rng, x, y, w, h, horizontal, kerbSide);
@@ -882,7 +887,7 @@ function paintHazardBand(
  * the cut ends of the wall and the shadow they throw across the water.
  */
 function paintDockMouth(ctx: CanvasRenderingContext2D, rng: Rng): void {
-  const x0 = WORLD.x0;
+  const x0 = SHELL.x0;
   const x1 = FLOOR.x;
   const { y0, y1 } = DOCK_OPENING;
 

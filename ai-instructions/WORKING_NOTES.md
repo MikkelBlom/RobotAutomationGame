@@ -39,6 +39,31 @@ not a whole fleet.
 string-pulled against line-of-sight. Robots are never snapped to it. This
 matters — Mikkel pushed back hard on anything that reads as a grid.
 
+## WORLD is not the building
+
+`WORLD` is the camera's limit and includes the dark apron on every side.
+`SHELL` is the building: floor plus its wall ring. Position walls, the dock
+mouth and anything else structural from **SHELL**.
+
+This caused two separate bugs. Walls were placed from `WORLD`, so once aprons
+were added all round, the west wall was drawn 5 m out in the dark apron — the
+building simply had no west wall — and the north and south walls overhung both
+corners. The dock mouth's fade to black was anchored the same way and ended up
+entirely off the end of the water, so the channel stopped dead against the wall
+with no darkening.
+
+## A cast shadow is a sweep, not an offset copy
+
+A shadow is the object's footprint swept ALONG the light: it starts underneath
+the object and stretches away, growing as the sun drops. `pushCastShadow` builds
+that — quad rotated to the light, `(footprint + length)` long, centred half a
+length away so its near end stays anchored.
+
+Offsetting a scaled-up blob instead (the earlier approach) ignores the light
+angle completely, and at large offsets the shadow detaches and floats with
+nothing casting it. Shadow length also has to scale with object height: a
+column's is several times a crate's for the same sun.
+
 ## Validate geometry, not just colour
 
 A "visual pass" that only tunes palettes and shader constants will sail straight

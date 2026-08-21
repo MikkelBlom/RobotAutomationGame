@@ -19,6 +19,39 @@ function visible(b: Bounds, x: number, y: number, pad: number): boolean {
 }
 
 /**
+ * Draws a cast shadow.
+ *
+ * A shadow is the object's footprint SWEPT along the light direction: it starts
+ * underneath the object and stretches away from it, growing longer as the sun
+ * drops. Simply offsetting a scaled-up blob — which is what this used to do —
+ * gives a shape that ignores the light angle entirely and, at large offsets,
+ * detaches and floats with nothing casting it.
+ *
+ * The quad is rotated to the light, made (footprint + length) long, and centred
+ * half a length away so its near end stays anchored on the object.
+ */
+export function pushCastShadow(
+  batch: SpriteBatch,
+  x: number,
+  y: number,
+  footprint: number,
+  lightAngle: number,
+  length: number,
+  alpha: number,
+): void {
+  const half = length * 0.5;
+  batch.pushRegion(
+    REGIONS.blockShadow,
+    x + Math.cos(lightAngle) * half,
+    y + Math.sin(lightAngle) * half,
+    lightAngle,
+    footprint + length,
+    footprint,
+    0, 0, 0, alpha,
+  );
+}
+
+/**
  * Fills the light-accumulation batches for one frame.
  *
  * Order matters at draw time: ambient clear, then additive sources, then
@@ -97,35 +130,22 @@ export class LightingPass {
   ): void {
     if (!settings.shadows || !settings.columns) return;
 
-    const throwX = lighting.shadowOffsetX;
-    const throwY = lighting.shadowOffsetY;
-    // Daylight throws a hard shadow; at night the lamps surround the column
-    // from several sides, so only a soft pool of occlusion survives.
+    const angle = Math.atan2(lighting.shadowOffsetY, lighting.shadowOffsetX);
+    const length = Math.hypot(lighting.shadowOffsetX, lighting.shadowOffsetY);
+    // Daylight throws a hard shadow; at night the lamps surround a column from
+    // several sides and only a soft pool of occlusion survives.
     const directional = Math.min(1, lighting.sunIntensity * 0.85 + 0.15);
-    const throwLen = Math.hypot(throwX, throwY) || 1;
-    const dirX = throwX / throwLen;
-    const dirY = throwY / throwLen;
-    const stretch = 1 + throwLen / 420;
 
     for (const col of this.level.columns) {
-      const x = col.x + throwX;
-      const y = col.y + throwY;
-      const size = col.size;
-      if (!visible(bounds, x, y, size * 4 + throwLen)) continue;
-
-      batch.pushRegion(
-        REGIONS.blockShadow, x, y, 0,
-        size * 1.9 * stretch, size * 1.9 * stretch,
-        0, 0, 0, 0.42 * directional,
+      if (!visible(bounds, col.x, col.y, col.size * 3 + length)) continue;
+      // Columns are tall, so they throw the longest shadows in the hall.
+      pushCastShadow(
+        batch, col.x, col.y, col.size * 1.35, angle, length * 2.2, 0.5 * directional,
       );
-      // Hard contact shadow, pushed just far enough along the light direction
-      // that a crescent of it emerges from under the base plate. Centred, it
-      // simply darkened the top of the column — from above, a shadow directly
-      // beneath an object is hidden by that object.
+      // Occlusion tucked under the base plate, always present.
       batch.pushRegion(
-        REGIONS.hardShadow,
-        col.x + dirX * size * 0.70, col.y + dirY * size * 0.70, 0,
-        size * 1.55, size * 1.55, 0, 0, 0, 0.6,
+        REGIONS.hardShadow, col.x, col.y, 0,
+        col.size * 1.5, col.size * 1.5, 0, 0, 0, 0.45,
       );
     }
   }
@@ -156,7 +176,7 @@ export class LightingPass {
     }
   }
 
-  /** Shadows the cargo throws, multiplied into the light buffer. */
+  /** Shadows the cargo throws, laid onto the floor. */
   collectPropShadows(
     batch: SpriteBatch,
     lighting: LightingState,
@@ -164,22 +184,20 @@ export class LightingPass {
     settings: Settings,
   ): void {
     if (!settings.shadows || !settings.props) return;
-    const throwX = lighting.shadowOffsetX * 0.5;
-    const throwY = lighting.shadowOffsetY * 0.5;
-    const len = Math.hypot(throwX, throwY) || 1;
-    const dirX = throwX / len;
-    const dirY = throwY / len;
+    const angle = Math.atan2(lighting.shadowOffsetY, lighting.shadowOffsetX);
+    const length = Math.hypot(lighting.shadowOffsetX, lighting.shadowOffsetY);
     const directional = Math.min(1, lighting.sunIntensity * 0.85 + 0.15);
+
     for (const prop of this.level.props) {
-      if (!visible(bounds, prop.x, prop.y, prop.size * 3)) continue;
-      batch.pushRegion(
-        REGIONS.blockShadow, prop.x + throwX * 0.7, prop.y + throwY * 0.7, prop.angle,
-        prop.size * 1.22, prop.size * 1.22, 0, 0, 0, 0.42 * directional,
+      if (!visible(bounds, prop.x, prop.y, prop.size * 3 + length)) continue;
+      // A crate is about knee height, so its shadow is much shorter than a
+      // column's for the same sun.
+      pushCastShadow(
+        batch, prop.x, prop.y, prop.size * 0.95, angle, length * 0.55, 0.48 * directional,
       );
       batch.pushRegion(
-        REGIONS.hardShadow,
-        prop.x + dirX * prop.size * 0.52, prop.y + dirY * prop.size * 0.52, prop.angle,
-        prop.size * 1.02, prop.size * 1.02, 0, 0, 0, 0.58,
+        REGIONS.hardShadow, prop.x, prop.y, prop.angle,
+        prop.size * 1.0, prop.size * 1.0, 0, 0, 0, 0.5,
       );
     }
   }

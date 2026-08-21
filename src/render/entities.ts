@@ -2,7 +2,7 @@ import type { LightingState } from '../core/dayCycle';
 import type { Settings } from '../core/settings';
 import { BOT_LENGTH, BOT_RADIUS, BOT_WIDTH, BotState, BotTask, type BotPool } from '../sim/bots';
 import { BOT_ART, CRATE_ART_FILL, REGIONS } from './atlas';
-import type { Bounds } from './lighting';
+import { pushCastShadow, type Bounds } from './lighting';
 import type { SpriteBatch } from './spriteBatch';
 
 /**
@@ -71,33 +71,24 @@ export class EntityRenderer {
     }
   }
 
-  /** Contact shadows, multiplied into the light buffer. */
+  /** Cast shadows, laid onto the floor before the robots stand on it. */
   drawShadows(batch: SpriteBatch, bounds: Bounds, lighting: LightingState, settings: Settings): void {
     if (!settings.shadows) return;
     const b = this.bots;
-    // Offset far enough that the shadow lands beside the robot. Drawn on top
-    // of it, it just turned the machine into a dark smudge.
-    const offX = lighting.shadowOffsetX * 0.62;
-    const offY = lighting.shadowOffsetY * 0.62;
-    const len = Math.hypot(offX, offY) || 1;
-    const dirX = offX / len;
-    const dirY = offY / len;
+    const angle = Math.atan2(lighting.shadowOffsetY, lighting.shadowOffsetX);
+    const length = Math.hypot(lighting.shadowOffsetX, lighting.shadowOffsetY);
     const directional = Math.min(1, lighting.sunIntensity * 0.7 + 0.3);
+
     for (let i = 0; i < b.count; i++) {
-      if (!visible(bounds, b.x[i], b.y[i], BOT_LENGTH * 2)) continue;
-      batch.pushRegion(
-        REGIONS.blockShadow,
-        b.x[i] + offX * 0.8, b.y[i] + offY * 0.8, b.angle[i],
-        SPRITE_W * 0.78, SPRITE_H * 0.78,
-        0, 0, 0, 0.36 * directional,
+      if (!visible(bounds, b.x[i], b.y[i], BOT_LENGTH * 2 + length)) continue;
+      // A robot is low, so its shadow is short even when a column's is long.
+      pushCastShadow(
+        batch, b.x[i], b.y[i], BOT_WIDTH * 1.15, angle, length * 0.42, 0.44 * directional,
       );
-      // Hard contact shadow, offset so a crescent emerges from under the
-      // hull. Centred it would just darken the robot itself.
+      // The hull's own footprint, which the robot then covers.
       batch.pushRegion(
-        REGIONS.hardShadow,
-        b.x[i] + dirX * BOT_LENGTH * 0.30, b.y[i] + dirY * BOT_LENGTH * 0.30, b.angle[i],
-        SPRITE_W * 0.86, SPRITE_H * 0.90,
-        0, 0, 0, 0.55,
+        REGIONS.hardShadow, b.x[i], b.y[i], b.angle[i],
+        SPRITE_W * 0.86, SPRITE_H * 0.90, 0, 0, 0, 0.5,
       );
     }
   }

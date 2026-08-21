@@ -186,18 +186,11 @@ function drawColumn(ctx: CanvasRenderingContext2D, rng: ReturnType<typeof makeRn
   const col = size * 0.44;
   const ch = col / 2;
 
-  // Grout bed: a slightly irregular skirt of mortar squeezed out under the plate.
+  // A thin grout skirt, squared to the plate. It used to be a wobbly circle,
+  // which read as a mysterious disc under every column.
   ctx.fillStyle = '#6a6b66';
   ctx.beginPath();
-  for (let i = 0; i <= 22; i++) {
-    const a = (i / 22) * TAU;
-    const r = ph + 12 + Math.sin(a * 3.1 + 1.2) * 5 + rng.range(-3, 3);
-    const x = Math.cos(a) * r;
-    const y = Math.sin(a) * r;
-    if (i === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-  }
-  ctx.closePath();
+  ctx.roundRect(-ph - 7, -ph - 7, plate + 14, plate + 14, 5);
   ctx.fill();
 
   // Base plate.
