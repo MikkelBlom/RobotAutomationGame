@@ -36,6 +36,17 @@ export function crateQuad(shape: CrateShapeValue): { w: number; h: number } {
   return { w: w / fill.w, h: h / fill.h };
 }
 
+/**
+ * Quad size for the corner-bracket outline around an arbitrary footprint.
+ *
+ * The bracket art fills a fixed fraction of its cell, so the quad has to be
+ * scaled up by that fraction or the brackets sit inside the thing they mark.
+ */
+export function outlineRect(w: number, h: number, pad = 40): { w: number; h: number } {
+  const fill = CRATE_FILL[CrateShape.Unit];
+  return { w: (w + pad) / fill.w, h: (h + pad) / fill.h };
+}
+
 /** Quad size for the corner-bracket outline around a crate of this shape. */
 export function outlineQuad(shape: CrateShapeValue, pad = 34): { w: number; h: number } {
   const { w, h } = shapeSize(shape);

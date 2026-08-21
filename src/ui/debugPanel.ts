@@ -152,6 +152,7 @@ export class DebugPanel {
       game.sfx.setVolume(v);
     }, (v) => `${Math.round(v * 100)}%`);
     this.buttons([
+      ['charge', () => { game.sfx.resume(); game.sfx.charge(); }],
       ['grab', () => { game.sfx.resume(); game.sfx.grab(); }],
       ['place', () => { game.sfx.resume(); game.sfx.place(); }],
       ['no', () => { game.sfx.resume(); game.sfx.refuse(); }],
@@ -159,9 +160,9 @@ export class DebugPanel {
     ]);
     this.buttons([
       ['doors', () => { game.sfx.resume(); game.sfx.doors(); }],
-      ['truck', () => { game.sfx.resume(); game.sfx.truck(); }],
+      ['arrive', () => { game.sfx.resume(); game.sfx.arrive(); }],
+      ['depart', () => { game.sfx.resume(); game.sfx.depart(); }],
       ['beep', () => { game.sfx.resume(); game.sfx.beep(); }],
-      ['charge', () => { game.sfx.resume(); game.sfx.charge(); }],
     ]);
 
     this.section('Diagnostics');

@@ -2,7 +2,7 @@ import type { LightingState } from '../core/dayCycle';
 import type { Settings } from '../core/settings';
 import { BOT_LENGTH, BOT_RADIUS, BOT_WIDTH, BotState, BotTask, type BotPool } from '../sim/bots';
 import { BOT_ART, REGIONS } from './atlas';
-import { crateQuad, crateRegion, outlineQuad } from './crateArt';
+import { crateQuad, crateRegion, outlineQuad, outlineRect } from './crateArt';
 import type { CrateMaterialValue, CrateShapeValue } from '../sim/cargo';
 import { CHARGE_PAD_H, CHARGE_PAD_W, FLOOR, type ChargePad } from '../sim/level';
 import { pushCastShadow, type Bounds } from './lighting';
@@ -53,19 +53,28 @@ const TRAIL_STEP = 46;
 /** Amber: a crate about to be collected. Cyan: a slot about to be filled. */
 const PICK_TINT = { r: 1.0, g: 0.72, b: 0.24 };
 const DROP_TINT = { r: 0.45, g: 0.89, b: 1.0 };
+/** Green: a charging point, matching the light the point itself throws. */
+const DOCK_TINT = { r: 0.42, g: 1.0, b: 0.62 };
 
 /**
  * One step of a robot's plan, ready to draw. Built by the game, which is the
  * only place that can see both a robot's order queue and the trailer's slots.
  */
+/** What a mark is about. Each gets its own colour and its own outline size. */
+export const MarkKind = { Pick: 0, Drop: 1, Dock: 2 } as const;
+export type MarkKindValue = (typeof MarkKind)[keyof typeof MarkKind];
+
 export interface PlanMark {
   x: number;
   y: number;
   angle: number;
+  kind: MarkKindValue;
+  /** Crate marks only; a dock mark uses `w`/`h` instead. */
   material: CrateMaterialValue;
   shape: CrateShapeValue;
-  /** True for a slot being filled, false for a crate being collected. */
-  drop: boolean;
+  /** Dock marks only: the footprint to bracket. */
+  w?: number;
+  h?: number;
   /** 0 for the step in progress, rising down the queue. */
   depth: number;
 }
@@ -521,9 +530,22 @@ export class EntityRenderer {
       // out what is happening now.
       const beat = mark.depth === 0 ? pulse : 0.55;
       const rank = mark.depth === 0 ? 1 : Math.max(0.28, 0.62 - mark.depth * 0.09);
-      const tint = mark.drop ? DROP_TINT : PICK_TINT;
+      const tint =
+        mark.kind === MarkKind.Dock ? DOCK_TINT
+        : mark.kind === MarkKind.Drop ? DROP_TINT
+        : PICK_TINT;
 
-      if (mark.drop) {
+      if (mark.kind === MarkKind.Dock) {
+        // A charging point has no contents to preview — just the bay it is.
+        const pad = outlineRect(mark.w ?? 0, mark.h ?? 0);
+        batch.pushRegion(
+          REGIONS.crateOutline, mark.x, mark.y, 0, pad.w, pad.h,
+          tint.r, tint.g, tint.b, (0.6 + beat * 0.4) * rank,
+        );
+        continue;
+      }
+
+      if (mark.kind === MarkKind.Drop) {
         // A translucent crate in the slot: the shape of what is coming is the
         // whole point of the mark.
         const q = crateQuad(mark.shape);

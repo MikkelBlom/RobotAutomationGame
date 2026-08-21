@@ -36,7 +36,7 @@ export const BotState = { Idle: 0, Moving: 1 } as const;
  * sequence once the robot has arrived, which is what produces the reverse-up,
  * arms-out, load-on-deck behaviour.
  */
-export const BotTask = { None: 0, Move: 1, Fetch: 2, Deliver: 3 } as const;
+export const BotTask = { None: 0, Move: 1, Fetch: 2, Deliver: 3, Charge: 4 } as const;
 
 /** Stages of a fetch, after the drive is done. */
 const Phase = { Driving: 0, Aligning: 1, Reaching: 2, Closing: 3, Lifting: 4 } as const;
@@ -86,11 +86,19 @@ export const BATTERY_DEAD = 0.001;
 const DEAD_SPEED = 0.16;
 /** Nose east, into the cabinet: the charge strip is on the front of the hull. */
 const DOCK_FACING = 0;
+/**
+ * Where a robot stops before backing onto a charging point.
+ *
+ * Zero would be the pad centre; this is far enough out that the align phase has
+ * a straight run in, and it is what `grabReach` is derived from so the two
+ * cannot disagree.
+ */
+const DOCK_STANDOFF = 210;
 /** How hard acceleration chases the target speed. */
 const ACCEL_RESPONSE = 9;
 
 /** What a queued order does when it comes up. */
-export const OrderKind = { Move: 0, Fetch: 1, Deliver: 2 } as const;
+export const OrderKind = { Move: 0, Fetch: 1, Deliver: 2, Charge: 3 } as const;
 export type OrderKindValue = (typeof OrderKind)[keyof typeof OrderKind];
 
 /**
@@ -110,6 +118,7 @@ export interface QueuedOrder {
   x: number;
   y: number;
   prop?: Prop;
+  pad?: ChargePad;
 }
 
 /** Waypoints for a robot currently under orders. */
@@ -165,6 +174,8 @@ export class BotPool {
   readonly placeY: Float32Array;
   /** Which trailer slot a delivery belongs to, or -1. */
   readonly placeSlot: Int32Array;
+  /** Which charging point a robot has been sent to, or -1. */
+  readonly targetPad: Int32Array;
   /** How far the load reaches along the approach axis, so the standoff suits
    *  the crate actually being collected. */
   readonly grabReach: Float32Array;
@@ -242,6 +253,7 @@ export class BotPool {
     this.placeX = new Float32Array(capacity);
     this.placeY = new Float32Array(capacity);
     this.placeSlot = new Int32Array(capacity);
+    this.targetPad = new Int32Array(capacity);
     this.grabReach = new Float32Array(capacity);
     this.approachX = new Float32Array(capacity);
     this.approachY = new Float32Array(capacity);
@@ -276,6 +288,7 @@ export class BotPool {
     this.battery[i] = 1;
     this.charging[i] = 0;
     this.placeSlot[i] = -1;
+    this.targetPad[i] = -1;
     this.approachX[i] = 1;
     this.approachY[i] = 0;
     this.liftT[i] = 1;
@@ -335,6 +348,9 @@ export class BotPool {
     const nextSlot = new Int32Array(next);
     nextSlot.set(this.placeSlot);
     (this as { placeSlot: Int32Array }).placeSlot = nextSlot;
+    const nextPad = new Int32Array(next);
+    nextPad.set(this.targetPad);
+    (this as { targetPad: Int32Array }).targetPad = nextPad;
     const nextTarget = new Int32Array(next);
     nextTarget.set(this.targetProp);
     (this as { targetProp: Int32Array }).targetProp = nextTarget;
@@ -361,6 +377,7 @@ export class BotPool {
     this.task[index] = BotTask.None;
     this.targetProp[index] = -1;
     this.placeSlot[index] = -1;
+    this.targetPad[index] = -1;
     this.taskPhase[index] = Phase.Driving;
     this.phaseTime[index] = 0;
     this.state[index] = BotState.Idle;
@@ -382,7 +399,8 @@ export class BotPool {
    */
   isBusy(index: number): boolean {
     const t = this.task[index];
-    return (t === BotTask.Fetch || t === BotTask.Deliver) && this.taskPhase[index] !== Phase.Driving;
+    if (t !== BotTask.Fetch && t !== BotTask.Deliver && t !== BotTask.Charge) return false;
+    return this.taskPhase[index] !== Phase.Driving;
   }
 
   /**
@@ -514,6 +532,11 @@ export class BotPool {
         if (idx >= 0 && this.startFetch(index, idx, order.prop, nav)) return true;
         continue;
       }
+      if (order.kind === OrderKind.Charge && order.pad) {
+        const idx = this.chargers.indexOf(order.pad);
+        if (idx >= 0 && this.startCharge(index, order.pad, idx, nav)) return true;
+        continue;
+      }
       if (order.kind === OrderKind.Deliver) {
         const drop = this.onResolveDrop?.(index);
         if (drop && this.startDeliver(index, drop.slot, drop.x, drop.y, nav)) return true;
@@ -612,6 +635,46 @@ export class BotPool {
     this.queues.delete(index);
     this.settleGrab(index);
     return this.startDeliver(index, slot, x, y, nav);
+  }
+
+  /**
+   * Sends a robot to a charging point, squared up on the way in.
+   *
+   * It drives to a standoff west of the pad and then runs the same align phase
+   * a grab uses, so it enters the bay straight instead of drifting to the
+   * middle from wherever it happened to stop.
+   */
+  orderCharge(index: number, pad: ChargePad, padIndex: number, nav: NavGrid, append = false): boolean {
+    if (append && (this.state[index] === BotState.Moving || this.isBusy(index))) {
+      this.pushOrder(index, { kind: OrderKind.Charge, x: pad.x, y: pad.y, pad });
+      return true;
+    }
+    this.queues.delete(index);
+    this.settleGrab(index);
+    return this.startCharge(index, pad, padIndex, nav);
+  }
+
+  /** Begins a docking run immediately. Does not touch the queue. */
+  private startCharge(
+    index: number, pad: ChargePad, padIndex: number, nav: NavGrid,
+  ): boolean {
+    if (!pad.unlocked) return false;
+    // In from the hall side, nose towards the cabinet.
+    const target = nav.nearestFree(pad.x - DOCK_STANDOFF, pad.y);
+    if (!target) return false;
+    if (!this.driveTo(index, target.x, target.y, nav)) return false;
+    this.approachX[index] = -1;
+    this.approachY[index] = 0;
+    // The align phase parks at anchor + approach * (halfLength + reach + gap);
+    // reach is chosen so that lands the hull centred on the pad.
+    this.grabReach[index] = DOCK_STANDOFF - BOT_HALF_LENGTH - GRAB_GAP;
+    this.placeX[index] = pad.x;
+    this.placeY[index] = pad.y;
+    this.targetPad[index] = padIndex;
+    this.task[index] = BotTask.Charge;
+    this.taskPhase[index] = Phase.Driving;
+    this.phaseTime[index] = 0;
+    return true;
   }
 
   /** Begins a delivery immediately. Does not touch the queue. */
@@ -738,7 +801,9 @@ export class BotPool {
         // sequence to run — a machine that has stopped in the right place tidies
         // itself into the bay, which is all the sequence would have looked like.
         const working =
-          this.task[i] === BotTask.Fetch || this.task[i] === BotTask.Deliver;
+          this.task[i] === BotTask.Fetch ||
+          this.task[i] === BotTask.Deliver ||
+          this.task[i] === BotTask.Charge;
         if (this.state[i] !== BotState.Moving && !working) {
           const ease = Math.min(1, dt * 2.6);
           this.x[i] += (point.x - this.x[i]) * ease;
@@ -771,6 +836,11 @@ export class BotPool {
   ): void {
     const isFetch = this.task[i] === BotTask.Fetch;
     const isDeliver = this.task[i] === BotTask.Deliver;
+    const isDock = this.task[i] === BotTask.Charge;
+    if (isDock) {
+      this.advanceDock(i, dt, nav);
+      return;
+    }
     if (!isFetch && !isDeliver) {
       // Arms drift back to stowed whenever nothing is being collected.
       if (this.armExtend[i] > 0) {
@@ -900,6 +970,44 @@ export class BotPool {
   }
 
   /**
+   * Drives onto a charging point and squares up on it.
+   *
+   * Deliberately the same two-stage shape as a grab — arrive, then align — so a
+   * machine entering a bay behaves the way a machine collecting a crate does.
+   */
+  private advanceDock(i: number, dt: number, nav: NavGrid): void {
+    if (this.armExtend[i] > 0) {
+      this.armExtend[i] = Math.max(0, this.armExtend[i] - dt / STOW_TIME);
+    }
+    if (this.taskPhase[i] === Phase.Driving) {
+      if (this.state[i] === BotState.Moving) return;
+      this.taskPhase[i] = Phase.Aligning;
+      this.phaseTime[i] = 0;
+      return;
+    }
+
+    this.phaseTime[i] += dt;
+    const parkX = this.placeX[i];
+    const parkY = this.placeY[i];
+    const ease = Math.min(1, dt * 3.4);
+    this.x[i] += (parkX - this.x[i]) * ease;
+    this.y[i] += (parkY - this.y[i]) * ease;
+    const delta = angleDelta(this.angle[i], DOCK_FACING);
+    this.angle[i] += clamp(delta, -this.turnRate[i] * dt, this.turnRate[i] * dt);
+
+    const offset = Math.hypot(parkX - this.x[i], parkY - this.y[i]);
+    if ((Math.abs(delta) < ALIGN_ANGLE && offset < ALIGN_DISTANCE) || this.phaseTime[i] > 5) {
+      this.x[i] = parkX;
+      this.y[i] = parkY;
+      this.angle[i] = DOCK_FACING;
+      this.task[i] = BotTask.None;
+      this.targetPad[i] = -1;
+      this.taskPhase[i] = Phase.Driving;
+      this.advanceQueue(i, nav);
+    }
+  }
+
+  /**
    * Pushes robots out of cargo using the real hull rectangle rather than a
    * circle. The nav grid only reasons about the robot's centre, so a machine
    * turning on the spot beside a crate could otherwise sweep its nose straight
@@ -1019,7 +1127,13 @@ export class BotPool {
       // A fetch or a delivery still has its grab to play out. The queue waits
       // for that; taking the next order here abandoned the crate on arrival.
       this.state[i] = BotState.Idle;
-      if (this.task[i] === BotTask.Fetch || this.task[i] === BotTask.Deliver) return;
+      if (
+        this.task[i] === BotTask.Fetch ||
+        this.task[i] === BotTask.Deliver ||
+        this.task[i] === BotTask.Charge
+      ) {
+        return;
+      }
       // Otherwise roll straight on to whatever was stacked behind this. A move
       // that finishes with nothing behind it is over — leaving the task set to
       // Move made a parked robot look permanently mid-order.

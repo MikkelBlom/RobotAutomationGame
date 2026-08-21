@@ -2,11 +2,12 @@ import { Camera } from './camera';
 import { DayClock } from './dayCycle';
 import { Input } from './input';
 import { defaultSettings, type Settings } from './settings';
-import { EntityRenderer, type PlanMark } from '../render/entities';
+import { EntityRenderer, MarkKind, type PlanMark } from '../render/entities';
 import { Renderer } from '../render/renderer';
 import { BOT_LENGTH, BOT_RADIUS, BotPool, BotTask, OrderKind } from '../sim/bots';
 import {
-  buildLevelGeometry, PLATE_TRIGGER, SPAWN, type LevelGeometry, type Prop,
+  buildLevelGeometry, CHARGE_PAD_H, CHARGE_PAD_W, PLATE_TRIGGER, SPAWN,
+  type ChargePad, type LevelGeometry, type Prop,
 } from '../sim/level';
 import { Sfx } from '../audio/sfx';
 import { Ledger } from '../sim/economy';
@@ -25,6 +26,20 @@ const CLICK_PICK_RADIUS = 110;
  * confetti, so there is no point paying to build them all.
  */
 const MAX_PLAN_MARKS = 40;
+
+/** How often the background clock asks for a tick, in milliseconds. */
+const BACKGROUND_TICK_MS = 250;
+/** Simulation step used when catching up. A frame's worth, not a whole tick. */
+const BACKGROUND_STEP = 0.05;
+/**
+ * Longest stretch of real time a single tick will simulate.
+ *
+ * Browsers throttle hard enough that a tick can arrive minutes late, and
+ * simulating all of it would lock the page up on return. Anything beyond this
+ * is simply lost — proper offline progress needs a rate model, not a fast
+ * replay of the whole simulation.
+ */
+const MAX_CATCH_UP = 20;
 
 export interface Stats {
   fps: number;
@@ -96,12 +111,18 @@ export class Game {
     };
     this.trailers.onSound = (what) => {
       if (what === 'doors') this.sfx.doors();
-      else this.sfx.truck();
+      else if (what === 'arrive') this.sfx.arrive();
+      else this.sfx.depart();
     };
     // Browsers will not start audio without a real gesture, so it waits for one.
     const wake = (): void => {
       if (this.settings.sound) this.sfx.resume();
     };
+    // Coming back to the tab: reset the clock so the first visible frame is a
+    // frame, not the whole time we were away.
+    document.addEventListener('visibilitychange', () => {
+      this.lastFrame = performance.now();
+    });
     window.addEventListener('pointerdown', wake);
     window.addEventListener('keydown', wake);
     this.trailers.onDeparted = (load) => {
@@ -176,11 +197,74 @@ export class Game {
     if (this.running) return;
     this.running = true;
     this.lastFrame = performance.now();
+    this.startBackgroundClock();
     requestAnimationFrame(this.frame);
   }
 
+  /**
+   * Keeps the simulation running while the page is not on screen.
+   *
+   * `requestAnimationFrame` stops entirely for a hidden tab, which froze the
+   * whole game the moment you switched away — no good for something meant to be
+   * left working. A worker timer keeps ticking where a page timer would be
+   * clamped to once a second, and each tick advances the sim by the real time
+   * that has passed rather than by a fixed step, so the result is the same
+   * however hard the browser throttles it.
+   */
+  private startBackgroundClock(): void {
+    const source = `let h=0;onmessage=(e)=>{clearInterval(h);` +
+      `if(e.data)h=setInterval(()=>postMessage(0),${BACKGROUND_TICK_MS});};`;
+    try {
+      const url = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
+      const worker = new Worker(url);
+      URL.revokeObjectURL(url);
+      worker.onmessage = this.backgroundTick;
+      worker.postMessage(true);
+      this.clockWorker = worker;
+    } catch {
+      // No workers available: fall back to a page timer. It will be throttled
+      // in the background, but the catch-up maths does not care how coarse the
+      // ticks are, only that they arrive.
+      this.clockTimer = window.setInterval(this.backgroundTick, BACKGROUND_TICK_MS);
+    }
+  }
+
+  private backgroundTick = (): void => {
+    if (!this.running || !document.hidden) return;
+    const now = performance.now();
+    let remaining = Math.min(MAX_CATCH_UP, (now - this.lastFrame) / 1000);
+    this.lastFrame = now;
+    // Stepped rather than applied in one go: the movement and separation code
+    // assumes a frame-sized dt, and handing it thirty seconds at once would
+    // walk robots straight through walls.
+    while (remaining > 0.0001) {
+      const dt = Math.min(BACKGROUND_STEP, remaining);
+      remaining -= dt;
+      this.elapsed += dt;
+      this.update(dt);
+    }
+  };
+
+  /** Stops the loop and releases the background clock. */
+  stop(): void {
+    this.running = false;
+    this.clockWorker?.terminate();
+    this.clockWorker = null;
+    if (this.clockTimer !== 0) window.clearInterval(this.clockTimer);
+    this.clockTimer = 0;
+  }
+
+  private clockWorker: Worker | null = null;
+  private clockTimer = 0;
+
   private frame = (now: number): void => {
     if (!this.running) return;
+    if (document.hidden) {
+      // The background clock owns the simulation while we cannot be seen.
+      // Rendering is pointless and the two must not both advance it.
+      requestAnimationFrame(this.frame);
+      return;
+    }
     const rawDt = (now - this.lastFrame) / 1000;
     this.lastFrame = now;
     // Clamp so a background tab or a breakpoint does not teleport the sim.
@@ -515,10 +599,18 @@ export class Game {
 
       const pick = (prop: Prop): void => {
         marks.push({
-          x: prop.x, y: prop.y, angle: prop.angle,
-          material: prop.material, shape: prop.shape, drop: false, depth,
+          x: prop.x, y: prop.y, angle: prop.angle, kind: MarkKind.Pick,
+          material: prop.material, shape: prop.shape, depth,
         });
         load = { material: prop.material, shape: prop.shape };
+        depth++;
+      };
+      const dock = (pad: ChargePad): void => {
+        marks.push({
+          x: pad.x, y: pad.y, angle: 0, kind: MarkKind.Dock,
+          material: 0 as CrateMaterialValue, shape: 0 as CrateShapeValue,
+          w: CHARGE_PAD_W, h: CHARGE_PAD_H, depth,
+        });
         depth++;
       };
       /** Books the next free slot and marks it. Returns where it landed. */
@@ -526,8 +618,8 @@ export class Game {
         if (!trailer || !load || slot < 0 || slot >= SLOT_COUNT) return null;
         const pos = TrailerFleet.slotPosition(trailer, slot);
         marks.push({
-          x: pos.x, y: pos.y, angle: 0,
-          material: load.material, shape: load.shape, drop: true, depth,
+          x: pos.x, y: pos.y, angle: 0, kind: MarkKind.Drop,
+          material: load.material, shape: load.shape, depth,
         });
         slot++;
         load = null;
@@ -541,6 +633,9 @@ export class Game {
         if (prop) pick(prop);
       } else if (this.bots.task[i] === BotTask.Deliver) {
         place();
+      } else if (this.bots.task[i] === BotTask.Charge && this.bots.targetPad[i] >= 0) {
+        const pad = this.level.chargers[this.bots.targetPad[i]];
+        if (pad) dock(pad);
       }
 
       for (const order of this.bots.queueOf(i) ?? []) {
@@ -554,6 +649,8 @@ export class Game {
             order.x = pos.x;
             order.y = pos.y;
           }
+        } else if (order.kind === OrderKind.Charge && order.pad) {
+          dock(order.pad);
         } else {
           depth++;
         }
@@ -578,9 +675,8 @@ export class Game {
     if (!trailer || !load || slot < 0 || slot >= SLOT_COUNT) return null;
     const pos = TrailerFleet.slotPosition(trailer, slot);
     marks.push({
-      x: pos.x, y: pos.y, angle: 0,
-      material: load.material, shape: load.shape, drop: true,
-      depth: marks.length,
+      x: pos.x, y: pos.y, angle: 0, kind: MarkKind.Drop,
+      material: load.material, shape: load.shape, depth: marks.length,
     });
     return pos;
   }
@@ -591,6 +687,18 @@ export class Game {
       if (this.bots.selected[i] && this.bots.carryMaterial[i] >= 0) return i;
     }
     return null;
+  }
+
+  /** Commissioned charging point under a click, or -1. */
+  private pickChargePad(x: number, y: number): number {
+    for (let i = 0; i < this.level.chargers.length; i++) {
+      const pad = this.level.chargers[i];
+      if (!pad.unlocked) continue;
+      if (Math.abs(x - pad.x) > CHARGE_PAD_W * 0.5 + 60) continue;
+      if (Math.abs(y - pad.y) > CHARGE_PAD_H * 0.5 + 60) continue;
+      return i;
+    }
+    return -1;
   }
 
   /** Nearest crate to a world point, within a generous grab radius. */
@@ -662,6 +770,21 @@ export class Game {
           // Nothing on the deck to set down yet, so it can only be queued.
           this.bots.orderDeliver(carrier, -1, ghost.x, ghost.y, this.nav, true);
         }
+      }
+      return;
+    }
+
+    // A charging point takes precedence over anything else near the east wall:
+    // it is a small target and there is nothing else to mean.
+    const pad = this.pickChargePad(target.x, target.y);
+    if (pad >= 0) {
+      const closest = nearest();
+      if (closest >= 0) {
+        if (!shift && this.bots.isBusy(closest)) this.bots.clearQueue(closest);
+        this.bots.orderCharge(
+          closest, this.level.chargers[pad], pad, this.nav,
+          shift || this.bots.isBusy(closest),
+        );
       }
       return;
     }

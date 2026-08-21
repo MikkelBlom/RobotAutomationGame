@@ -55,6 +55,10 @@
 | Charging at a live point | Implemented | Park on it; settles square, fills in 20s, feed pulses from the cabinet | 2026-08-21 | charging run |
 | Procedural sound | Implemented | Synthesised; one fleet-wide drive bed plus throttled one-shots | 2026-08-21 | — |
 | Buying a charging point | Planned | Nothing spends revenue yet, so flat is currently unrecoverable | — | charging run |
+| Charging dock order | Implemented | Right-click a live point: green route mark, aligns on the way in | 2026-08-21 | charging run |
+| Dispatch plate latch | Implemented | Lamp off once the truck goes; step off and on to re-arm | 2026-08-21 | dispatch plates |
+| Runs while the tab is hidden | Implemented | Worker clock + real-elapsed catch-up, capped at 20s per tick | 2026-08-21 | — |
+| Offline progress | Planned | Needs a rate model; long absences are currently just lost | — | runs while hidden |
 | Long hauler / big hauler / heavy hauler | Planned | Needed for 1x2, 2x2 and steel crates respectively | — | hauler class gating |
 | Bays 1-3 unlock | Planned | Presumably a progression cost | — | one bay unlocked |
 | Flying robots | Planned | Must ignore terrain/congestion, cost energy | — | — |

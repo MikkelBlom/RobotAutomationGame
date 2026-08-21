@@ -439,3 +439,50 @@ fixture's whole job is to be seen, that beats where the cable would really run.
 **One charging point starts commissioned.** With none there is no way back from a
 flat battery, which is a dead end rather than a difficulty. When points become
 purchasable this can go back to zero — but only then.
+
+## Sound, background running, and docking (2026-08-21, night)
+
+**Noise is a last resort.** The first sound pass built almost everything from
+filtered noise and it was television static. What each thing actually is:
+- An electric drive is TONAL. Two detuned sawtooths well lowpassed for the
+  motor, plus an inverter whine that tracks speed hard — that rising note under
+  load is most of what makes a drive read as electric. Noise stays, but rolled
+  off below 190 Hz so it is felt rather than heard.
+- A wooden crate is a set of INHARMONIC resonant modes. `CRATE_MODES` is five
+  partials with no harmonic relationship, each with its own short decay. The
+  inharmonicity is what stops it sounding like a drum. A set-down is two hits,
+  the second smaller: one hit sounds dropped, two sound set down.
+- A reversing alarm is a near-pure SQUARE around a kilohertz with a brutal
+  envelope, and long enough to be a beep rather than a tick.
+- A diesel is a low sawtooth CHOPPED by a square LFO at the firing rate. The
+  chop is the whole trick: unmodulated it is a hum, gated twenty times a second
+  it is an engine. Arrive and depart are now separate voices with their own
+  rev direction, because a truck pulling away was silent before.
+
+**The preview pane reports `document.hidden === true`.** That is why
+`requestAnimationFrame` never fired in it, and it now also means `frame()`
+correctly refuses to render there. Any scripted test that drives `g.frame()` by
+hand must first override `document.hidden` to false, or the calls silently do
+nothing and the robot appears wedged at spawn. Cost me a while.
+
+**Background running is a worker timer plus real-elapsed catch-up.** rAF stops
+dead for a hidden page. A worker's `setInterval` keeps firing where a page timer
+would be clamped to once a second, and each tick advances the sim by the real
+time that has passed rather than a fixed step, so the result is the same however
+hard the browser throttles. The catch-up is STEPPED at 0.05 s — the movement and
+separation code assumes a frame-sized dt and handing it thirty seconds at once
+walks robots through walls — and capped at `MAX_CATCH_UP`, because simulating
+minutes of backlog would lock the page up on return. Proper offline progress
+needs a rate model, not a fast replay.
+
+**Standing on a button is not pressing it.** `Trailer.plateLatched` latches as
+soon as the plate has been acted on and clears only when the robot actually
+steps off. It also latches while there is no trailer to dispatch, so parking
+there through a departure and a return does not fire the instant the next one
+backs on.
+
+**Docking is the same two-stage shape as a grab.** Right-clicking a charging
+point is now a real `BotTask.Charge` with its own green route mark, driving to a
+standoff and then running an align phase, rather than drifting to the middle of
+whatever pad it happened to stop on. `DOCK_STANDOFF` is the single number the
+approach point and `grabReach` are both derived from, so they cannot disagree.

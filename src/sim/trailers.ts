@@ -65,6 +65,14 @@ export interface Trailer {
   awayHours: number;
   /** Seconds the dispatch plate has been held, while docked. */
   dispatch: number;
+  /**
+   * True once the plate has done its job, until it is released.
+   *
+   * Without it, a robot parked on the plate keeps the beacon lit after the
+   * trailer has gone and dispatches the next one the instant it docks. Standing
+   * on a button is not the same as pressing it.
+   */
+  plateLatched: boolean;
   /** Beacon brightness, 0 to 1. Rises while the doors are being sent shut. */
   alarm: number;
 }
@@ -77,7 +85,7 @@ export class TrailerFleet {
    */
   onDeparted: ((load: Trailer['cargo']) => void) | null = null;
   /** Something happened worth hearing: doors moving, or a trailer on the road. */
-  onSound: ((what: 'doors' | 'truck') => void) | null = null;
+  onSound: ((what: 'doors' | 'arrive' | 'depart') => void) | null = null;
   private readonly rng: Rng;
 
   constructor(bays: DockBay[], seed: number) {
@@ -97,6 +105,7 @@ export class TrailerFleet {
         cargo: new Array(SLOT_COUNT).fill(null),
         awayHours: 0,
         dispatch: 0,
+        plateLatched: false,
         alarm: 0,
       });
       bay.occupied = docked;
@@ -131,9 +140,14 @@ export class TrailerFleet {
       const wasDockable = TrailerFleet.isDockable(t);
       t.elapsed += dt;
 
-      // The beacon is on whenever the doors are being sent shut — while the
-      // plate is being held, and all the way out of the bay.
-      const held = t.state === TrailerState.Docked && plateHeld(t.bay.x);
+      // The plate latches as soon as it has been acted on, and unlatches only
+      // when the robot actually steps off it. It also latches while there is no
+      // trailer to dispatch, so standing there through a departure and a return
+      // does not fire the moment the next one backs on.
+      const pressed = plateHeld(t.bay.x);
+      if (!pressed) t.plateLatched = false;
+      else if (t.state !== TrailerState.Docked) t.plateLatched = true;
+      const held = t.state === TrailerState.Docked && pressed && !t.plateLatched;
       const warning =
         held || t.state === TrailerState.Closing || t.state === TrailerState.Leaving;
       t.alarm += ((warning ? 1 : 0) - t.alarm) * Math.min(1, dt * 6);
@@ -146,7 +160,7 @@ export class TrailerFleet {
           if (t.awayHours <= 0) {
             // A fresh trailer, empty.
             t.cargo.fill(null);
-            this.onSound?.('truck');
+            this.onSound?.('arrive');
             this.enter(t, TrailerState.Arriving);
           }
           break;
@@ -179,6 +193,7 @@ export class TrailerFleet {
           // loaded, not on a timer — and never while a robot is still aboard.
           if ((sent || TrailerFleet.isFull(t)) && !occupiedByRobot(t.bay.x)) {
             t.dispatch = 0;
+            t.plateLatched = true;
             this.onSound?.('doors');
             this.enter(t, TrailerState.Closing);
           }
@@ -197,7 +212,7 @@ export class TrailerFleet {
           if (t.elapsed >= CLOSE_TIME) {
             // Doors shut and rolling: the load has left the building.
             this.onDeparted?.(t.cargo);
-            this.onSound?.('truck');
+            this.onSound?.('depart');
             this.enter(t, TrailerState.Leaving);
           }
           break;

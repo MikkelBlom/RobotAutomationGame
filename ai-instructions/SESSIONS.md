@@ -222,3 +222,28 @@ Verified end to end after: three crates hauled, plate-dispatched, shipped at
 square at angle 0. 901 robots at sim 0.97 ms / draw 0.56 ms.
 
 Not done: nothing cut.
+
+---
+
+## 2026-08-21 — Claude Code (Opus 5) — docking, sound rebuild, background running
+
+- **Charging points are a real order.** `BotTask.Charge` + `orderCharge`, with a
+  green corner-bracket route mark (`MarkKind.Dock`) and a two-stage drive-then-
+  align exactly like a grab. `PlanMark.drop` became `PlanMark.kind` with three
+  values. Right-clicking a commissioned pad issues it; it queues behind shift.
+- **Beacon latch.** `Trailer.plateLatched` — see WORKING_NOTES. Verified: return
+  while standing on the plate leaves the lamp off and does not dispatch; 12 s of
+  standing does nothing; step off, step on, and it fires.
+- **Sound rebuilt from scratch.** Motor and whine instead of noise, inharmonic
+  modal synthesis for crates, a proper square reversing alarm, and a chopped
+  sawtooth diesel with separate arrive and depart voices. Reasoning per sound is
+  in WORKING_NOTES.
+- **Runs in the background.** Worker-driven clock plus real-elapsed catch-up;
+  `frame()` skips rendering while hidden so the two cannot both advance the sim.
+
+Verified after: haul loop, plate dispatch, ledger, and a dock order landing the
+robot exactly on the pad at angle 0 and charging. Background clock confirmed
+advancing the sim 3.5 s of simulation with the page hidden and rAF stopped.
+
+Not done: nothing cut. Offline progress beyond `MAX_CATCH_UP` (20 s) is lost —
+see the handoff.
