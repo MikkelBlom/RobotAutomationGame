@@ -51,6 +51,8 @@ export class NavGrid {
   private readonly inOpen: Uint8Array;
   private readonly botRadius: number;
   private bays: DockBay[] = [];
+  /** Crates loaded into trailers, as world circles. Rebuilt with the bay strip. */
+  private cargoBlocks: Array<{ x: number; y: number; r: number }> = [];
   private columns: Column[] = [];
   private props: Prop[] = [];
   private searchId = 0;
@@ -92,8 +94,12 @@ export class NavGrid {
    * A trailer docking or leaving cannot affect anything else, and doing a full
    * rebuild for it cost a four-frame hitch every few seconds.
    */
-  rebuildBayCorridors(bays: DockBay[]): void {
+  rebuildBayCorridors(
+    bays: DockBay[],
+    cargo: Array<{ x: number; y: number; r: number }> = [],
+  ): void {
     this.bays = bays;
+    this.cargoBlocks = cargo;
     const edge = this.botRadius + 30;
     const lastRow = Math.min(
       this.rows - 1,
@@ -156,7 +162,15 @@ export class NavGrid {
     if (wy < FLOOR.y) {
       // North of the slab: only a bay corridor is drivable, everything else
       // out here is wall or the dark apron.
-      return !this.inBayCorridor(wx, wy, botRadius);
+      if (!this.inBayCorridor(wx, wy, botRadius)) return true;
+      // Crates already loaded into a trailer are obstacles like any other.
+      for (const c of this.cargoBlocks) {
+        const dx = wx - c.x;
+        const dy = wy - c.y;
+        const reach = c.r + botRadius;
+        if (dx * dx + dy * dy < reach * reach) return true;
+      }
+      return false;
     }
     if (
       wx < FLOOR.x + edge ||

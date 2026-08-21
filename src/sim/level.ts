@@ -1,4 +1,12 @@
 import { makeRng } from '../core/mathUtils';
+import {
+  CrateMaterial,
+  CrateShape,
+  crateRadius,
+  shapeSize,
+  type CrateMaterialValue,
+  type CrateShapeValue,
+} from './cargo';
 import { distanceToEdges, pointInPolygon, polygonBounds, type Polygon } from './polygon';
 
 /**
@@ -134,6 +142,8 @@ export interface DockBay {
   width: number;
   /** Whether a trailer is currently backed onto it. */
   occupied: boolean;
+  /** Shuttered bays take no trailers at all yet. */
+  active: boolean;
 }
 
 /**
@@ -156,7 +166,14 @@ export function buildDockBays(): DockBay[] {
   const span = spacing * (count - 1);
   const first = FLOOR.x + FLOOR.w - 900 - span;
   for (let i = 0; i < count; i++) {
-    bays.push({ x: first + i * spacing, width: BAY_WIDTH, occupied: i === 1 || i === 2 });
+    // Only one bay is in service so far; the rest are shuttered. It is the
+    // outermost one, so the working dock sits at the far end of the run.
+    bays.push({
+      x: first + i * spacing,
+      width: BAY_WIDTH,
+      occupied: false,
+      active: i === count - 1,
+    });
   }
   return bays;
 }
@@ -185,14 +202,21 @@ export interface Skylight {
   intensity: number;
 }
 
-/** Abandoned cargo left on the floor. Blocks robots and casts a shadow. */
+/** A crate on the floor. Blocks robots and casts a shadow. */
 export interface Prop {
   x: number;
   y: number;
+  /**
+   * Crates sit square to the building. They used to be scattered at random
+   * angles, which made a robot's approach look crooked no matter how carefully
+   * it lined up — there was no straight-on face to line up with.
+   */
   angle: number;
-  size: number;
-  /** 0 = timber crate, 1 = steel box, 2 = pallet stack. */
-  variant: number;
+  material: CrateMaterialValue;
+  shape: CrateShapeValue;
+  /** Footprint in centimetres. */
+  w: number;
+  h: number;
   /** Collision half-extent. Deliberately a little LARGER than the art. */
   radius: number;
 }
@@ -332,24 +356,35 @@ function buildProps(
   };
 
   for (const [cx, cy, spread] of clusters) {
-    const n = rng.int(3, 6);
+    // A trailer takes twelve. The hall has to hold at least a couple of loads
+    // of the one thing the starting machine can lift, or the truck never fills
+    // and never leaves.
+    const n = rng.int(5, 8);
     for (let k = 0; k < n; k++) {
       for (let attempt = 0; attempt < 40; attempt++) {
         const x = cx + rng.range(-spread, spread);
         const y = cy + rng.range(-spread, spread);
-        // `size` is the crate's real footprint in centimetres. Most are a
-        // Euro pallet's 120 cm; a few are the larger 150 cm transit boxes. The
-        // robot's deck is ~145 cm, so a pallet crate fits and a big one does
-        // not — which is the point.
-        const size = rng.chance(0.75) ? rng.range(112, 126) : rng.range(148, 162);
-        // Collision reaches the corners of the square, not just its faces.
-        const radius = size * 0.72;
+
+        // Mostly single pallets of timber — the only thing the starting machine
+        // is rated for. The rest are there to be visibly out of reach.
+        const roll = rng.next();
+        const shape: CrateShapeValue =
+          roll < 0.72 ? CrateShape.Unit : roll < 0.88 ? CrateShape.Long : CrateShape.Large;
+        const material: CrateMaterialValue =
+          rng.chance(0.70) ? CrateMaterial.Timber : CrateMaterial.Steel;
+
+        const { w, h } = shapeSize(shape);
+        // Square to the building, quarter-turned at random so long crates lie
+        // both ways. A crate at an arbitrary angle has no face to line up on.
+        const quarter = rng.int(0, 3);
+        const angle = (quarter * Math.PI) / 2;
+        const radius = crateRadius(shape);
         if (!clearOf(x, y, radius)) continue;
+
         props.push({
-          x, y,
-          angle: rng.range(0, Math.PI * 2),
-          size,
-          variant: rng.chance(0.5) ? 0 : rng.chance(0.6) ? 1 : 2,
+          x, y, angle, material, shape,
+          w: quarter % 2 === 0 ? w : h,
+          h: quarter % 2 === 0 ? h : w,
           radius,
         });
         break;

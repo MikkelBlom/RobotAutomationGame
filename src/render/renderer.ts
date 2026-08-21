@@ -34,6 +34,8 @@ export interface FrameContext {
   drawEntityShadows?: (batch: SpriteBatch, bounds: Bounds) => void;
   drawEntityLights?: (batch: SpriteBatch, bounds: Bounds) => void;
   drawGlow?: (batch: SpriteBatch, bounds: Bounds) => void;
+  /** Order marks and the drop ghost. Needs the lighting pass for trailer data. */
+  drawMarks?: (batch: SpriteBatch, bounds: Bounds, pass: LightingPass) => void;
   drawOverlay?: (batch: SpriteBatch, bounds: Bounds) => void;
 }
 
@@ -219,7 +221,10 @@ export class Renderer {
     this.entityBatch.begin();
     pass?.collectColumns(this.entityBatch, bounds, ctx.settings);
     pass?.collectProps(this.entityBatch, bounds, ctx.settings);
-    if (ctx.trailers) pass?.collectTrailers(this.entityBatch, ctx.trailers, bounds);
+    if (ctx.trailers) {
+      pass?.collectTrailers(this.entityBatch, ctx.trailers, bounds);
+      pass?.collectTrailerCargo(this.entityBatch, ctx.trailers, bounds);
+    }
     ctx.drawEntities?.(this.entityBatch, bounds);
     sprites += this.entityBatch.length;
     this.entityBatch.flush(view, this.atlasTexture);
@@ -282,6 +287,7 @@ export class Renderer {
     // ------------------------------------------------------------ 5. overlay
     applyBlend(gl, BlendMode.Normal);
     this.overlayBatch.begin();
+    if (pass) ctx.drawMarks?.(this.overlayBatch, bounds, pass);
     ctx.drawOverlay?.(this.overlayBatch, bounds);
     sprites += this.overlayBatch.length;
     this.overlayBatch.flush(view, this.atlasTexture);

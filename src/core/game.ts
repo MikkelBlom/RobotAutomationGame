@@ -4,10 +4,11 @@ import { Input } from './input';
 import { defaultSettings, type Settings } from './settings';
 import { EntityRenderer } from '../render/entities';
 import { Renderer } from '../render/renderer';
-import { BOT_RADIUS, BotPool } from '../sim/bots';
+import { BOT_LENGTH, BOT_RADIUS, BotPool, BotTask } from '../sim/bots';
 import { buildLevelGeometry, SPAWN, type LevelGeometry } from '../sim/level';
 import { NavGrid } from '../sim/navGrid';
 import { TrailerFleet } from '../sim/trailers';
+import { canLift, type CrateMaterialValue, type CrateShapeValue, type HaulerClassValue } from '../sim/cargo';
 
 const EDGE_PAN_MARGIN = 58;
 const PAN_SPEED = 1750;
@@ -39,6 +40,9 @@ export class Game {
     fps: 60, frameMs: 0, simMs: 0, drawMs: 0, sprites: 0, bots: 0, selected: 0,
   };
 
+  /** Where the drop ghost currently sits, so a right click can find it. */
+  dropGhost: { x: number; y: number } | null = null;
+
   /** Called at the end of each frame — used by the debug console. */
   onFrame: (() => void) | null = null;
 
@@ -67,6 +71,8 @@ export class Game {
     this.input = new Input(this.renderer.canvas);
     this.renderer.setLevel(this.level);
     this.nav = new NavGrid(this.level.columns, this.level.props, this.level.bays, BOT_RADIUS);
+    this.bots.onDelivered = this.onDelivered;
+    this.bots.onResolveDrop = this.resolveDrop;
     this.bots.setProps(this.level.props);
     this.entities = new EntityRenderer(this.bots);
 
@@ -199,6 +205,18 @@ export class Game {
         this.entities.drawGlow(batch, bounds, lighting, time);
         this.entities.drawTrails(batch, bounds, time, this.settings);
       },
+      drawMarks: (batch, bounds, pass) => {
+        this.entities.drawOrderMarks(batch, bounds, this.level.props, time);
+        // Only offer a drop mark when something is actually on a deck.
+        const load = this.markedLoad();
+        this.dropGhost =
+          load === null
+            ? null
+            : pass.collectDropGhost(
+                batch, this.trailers, bounds, load.material, load.shape,
+                0.5 + 0.5 * Math.sin(time * 3.2),
+              );
+      },
       drawOverlay: (batch, bounds) => this.entities.drawSelection(batch, bounds, time),
     });
   }
@@ -211,8 +229,11 @@ export class Game {
     // Trailers coming and going change which bays can be driven into. Only the
     // bay strip is re-rasterised: a full rebuild here cost a four-frame hitch
     // every few seconds.
-    if (this.trailers.update(dt * this.settings.simSpeed)) {
-      this.nav.rebuildBayCorridors(this.level.bays);
+    const hours = this.settings.timePaused
+      ? 0
+      : ((dt * this.settings.simSpeed) / this.clock.dayLengthSeconds) * 24;
+    if (this.trailers.update(dt * this.settings.simSpeed, hours, this.robotAtBay)) {
+      this.nav.rebuildBayCorridors(this.level.bays, this.trailerCargoBlocks());
     }
 
     this.updateCamera(dt);
@@ -320,6 +341,81 @@ export class Game {
     this.nav.clearAround(x, y, radius, this.level.props);
   };
 
+  /**
+   * Whether anything is inside a trailer or sitting in its mouth. A trailer
+   * pulling out with a robot aboard would carry it off out of the building, so
+   * it waits.
+   */
+  private robotAtBay = (bayX: number): boolean => {
+    const t = this.trailers.trailers.find((x) => x.bay.x === bayX);
+    if (!t) return false;
+    for (let i = 0; i < this.bots.count; i++) {
+      if (TrailerFleet.contains(t, this.bots.x[i], this.bots.y[i], BOT_LENGTH)) return true;
+      // A robot on its way in counts too, or it arrives to a closed door.
+      if (this.bots.task[i] === BotTask.Deliver && Math.abs(this.bots.goalX[i] - bayX) < 400) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  /** Loaded crates, as circles the nav grid can treat as obstacles. */
+  private trailerCargoBlocks(): Array<{ x: number; y: number; r: number }> {
+    const out: Array<{ x: number; y: number; r: number }> = [];
+    for (const t of this.trailers.trailers) {
+      if (!TrailerFleet.isDockable(t)) continue;
+      for (let slot = 0; slot < t.cargo.length; slot++) {
+        if (!t.cargo[slot]) continue;
+        const p = TrailerFleet.slotPosition(t, slot);
+        out.push({ x: p.x, y: p.y, r: 74 });
+      }
+    }
+    return out;
+  }
+
+  /** A robot has set its load down in a trailer slot. */
+  private onDelivered = (_bot: number, slot: number, material: number, shape: number): void => {
+    const t = this.trailers.trailers.find((x) => TrailerFleet.isDockable(x));
+    if (!t || slot < 0) return;
+    t.cargo[slot] = {
+      material: material as CrateMaterialValue,
+      shape: shape as CrateShapeValue,
+    };
+    // The crate is an obstacle from now on.
+    this.nav.rebuildBayCorridors(this.level.bays, this.trailerCargoBlocks());
+  };
+
+  /** A selected robot with something on its deck, if there is one. */
+  private carryingSelection(): number | null {
+    for (let i = 0; i < this.bots.count; i++) {
+      if (this.bots.selected[i] && this.bots.carryMaterial[i] >= 0) return i;
+    }
+    return null;
+  }
+
+  /**
+   * What the drop mark should be showing, if anything.
+   *
+   * A robot on its way to collect something counts as well as one already
+   * loaded: the mark is what the player clicks to queue the delivery behind the
+   * fetch, so it has to be on screen before the crate reaches the deck.
+   */
+  private markedLoad(): { material: CrateMaterialValue; shape: CrateShapeValue } | null {
+    const carrying = this.carryingSelection();
+    if (carrying !== null) {
+      return {
+        material: this.bots.carryMaterial[carrying] as CrateMaterialValue,
+        shape: this.bots.carryShape[carrying] as CrateShapeValue,
+      };
+    }
+    for (let i = 0; i < this.bots.count; i++) {
+      if (!this.bots.selected[i] || this.bots.task[i] !== BotTask.Fetch) continue;
+      const prop = this.level.props[this.bots.targetProp[i]];
+      if (prop) return { material: prop.material, shape: prop.shape };
+    }
+    return null;
+  }
+
   /** Nearest crate to a world point, within a generous grab radius. */
   private pickProp(x: number, y: number): number {
     let best = -1;
@@ -335,6 +431,17 @@ export class Game {
     return best;
   }
 
+  /** Where a queued delivery should go by the time it actually starts. */
+  private resolveDrop = (bot: number): { slot: number; x: number; y: number } | null => {
+    if (this.bots.carryMaterial[bot] < 0) return null;
+    const trailer = this.trailers.trailers.find((t) => TrailerFleet.isDockable(t));
+    if (!trailer) return null;
+    const slot = TrailerFleet.nextFreeSlot(trailer);
+    if (slot < 0) return null;
+    const pos = TrailerFleet.slotPosition(trailer, slot);
+    return { slot, x: pos.x, y: pos.y };
+  };
+
   private updateOrders(): void {
     const click = this.input.rightClick;
     if (!click) return;
@@ -342,25 +449,66 @@ export class Game {
     const selected = this.bots.selectedIndices();
     if (selected.length === 0) return;
 
-    // Right-clicking a crate sends the nearest selected robot to collect it.
-    const propIndex = this.pickProp(target.x, target.y);
-    if (propIndex >= 0) {
-      let closest = selected[0];
-      let closestDist = Infinity;
+    // Shift queues an order behind the current one instead of replacing it.
+    const shift = this.input.isDown('shift');
+
+    /** Closest selected robot, optionally restricted to ones fit for the job. */
+    const nearest = (fit?: (i: number) => boolean): number => {
+      let best = -1;
+      let bestDist = Infinity;
       for (const i of selected) {
+        if (fit && !fit(i)) continue;
         const d = Math.hypot(this.bots.x[i] - target.x, this.bots.y[i] - target.y);
-        if (d < closestDist) {
-          closestDist = d;
-          closest = i;
+        if (d < bestDist) {
+          bestDist = d;
+          best = i;
         }
       }
-      this.bots.orderFetch(closest, propIndex, this.level.props[propIndex], this.nav);
+      return best;
+    };
+
+    // The drop mark is checked first: it sits over the trailer floor, where a
+    // stray crate pick would otherwise win the click.
+    const ghost = this.dropGhost;
+    if (ghost && Math.hypot(ghost.x - target.x, ghost.y - target.y) < 260) {
+      // The robot that will do it may not be loaded YET — a queued delivery
+      // runs after the fetch in front of it.
+      const carrier = this.carryingSelection() ?? nearest();
+      if (carrier >= 0) {
+        if (!shift && this.bots.isBusy(carrier)) this.bots.clearQueue(carrier);
+        const drop = this.resolveDrop(carrier);
+        if (drop) {
+          this.bots.orderDeliver(
+            carrier, drop.slot, drop.x, drop.y, this.nav, shift || this.bots.isBusy(carrier),
+          );
+        } else {
+          // Nothing on the deck to set down yet, so it can only be queued.
+          this.bots.orderDeliver(carrier, -1, ghost.x, ghost.y, this.nav, true);
+        }
+      }
       return;
     }
 
-    // Shift queues the destination behind the current order instead of
-    // replacing it, so a route can be built up click by click.
-    const append = this.input.isDown('shift');
+    // Right-clicking a crate sends the nearest selected robot to collect it.
+    const propIndex = this.pickProp(target.x, target.y);
+    if (propIndex >= 0) {
+      const prop = this.level.props[propIndex];
+      // Prefer a machine rated for it and with a free deck, so selecting a
+      // squad does not hand the job to a loaded robot standing slightly nearer.
+      const rated = (i: number): boolean =>
+        canLift(this.bots.hauler[i] as HaulerClassValue, prop.material, prop.shape);
+      const free = nearest((i) => rated(i) && this.bots.carryMaterial[i] < 0);
+      const able = free >= 0 ? free : nearest(rated);
+      if (able >= 0) {
+        if (!shift && this.bots.isBusy(able)) this.bots.clearQueue(able);
+        this.bots.orderFetch(able, propIndex, prop, this.nav, shift || this.bots.isBusy(able));
+      }
+      return;
+    }
+
+    // Ordinary movement. A robot mid-grab takes the order onto its queue rather
+    // than abandoning the animation, so the crate never hangs in mid-air.
+    const append = shift;
 
     // Spread destinations so a squad does not all aim at one point and shove
     // each other around it.
@@ -371,8 +519,12 @@ export class Game {
       const row = Math.floor(k / perRow);
       const offsetX = (col - (perRow - 1) / 2) * spacing;
       const offsetY = (row - (Math.ceil(selected.length / perRow) - 1) / 2) * spacing;
+      const i = selected[k];
+      // A plain click at a robot mid-grab still means "then go there, and only
+      // there", so anything already stacked up is dropped first.
+      if (!append && this.bots.isBusy(i)) this.bots.clearQueue(i);
       this.bots.orderMove(
-        selected[k], target.x + offsetX, target.y + offsetY, this.nav, append,
+        i, target.x + offsetX, target.y + offsetY, this.nav, append || this.bots.isBusy(i),
       );
     }
   }

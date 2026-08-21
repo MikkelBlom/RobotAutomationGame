@@ -46,3 +46,51 @@ Not done: the loading dock in the top-right and fog of war (both specified this
 session, not started). Water at extreme close zoom still leans abstract.
 
 Next: loading dock + fog of war; then robot animation.
+
+---
+
+## 2026-08-20/21 — Claude Code (Opus 5) — the haulage loop
+
+Built the first real gameplay loop: pick a crate off the warehouse floor, carry
+it to the docked trailer, set it down on a marked slot, repeat until the trailer
+is full, watch it leave and come back.
+
+**Crate taxonomy** — `src/sim/cargo.ts` is the single source of truth. Three
+shapes (1x1, 1x2, 2x2) x two materials (timber, steel), sized off `CRATE_UNIT =
+120`. `liftRefusal(hauler, material, shape)` returns a reason string or null;
+`canLift` is the boolean wrapper. Hauler classes: Standard / Long / Big / Heavy.
+The starting machine is Standard, so only timber 1x1 can be moved — everything
+else is deliberately visible and out of reach until the other haulers exist.
+
+**Crate art** — `src/render/crateArt.ts` maps (material, shape) to an atlas
+region and a quad. The quad is ALWAYS derived from the shape's canonical
+footprint; rotation handles quarter-turns. Using the world-axis footprint
+together with `prop.angle` rotates twice — that was the bug behind "shadows are
+rotated 90 degrees wrong on the long crates".
+
+**Trailers** — 12 slots (3 across x 4 deep), filled from the far end back so the
+robot never has to get past its own work. A trailer leaves only when it is full
+AND `robotAtBay()` says nothing of ours is inside or heading in; if a robot
+enters while the doors are closing they re-open. Away for 2.5-5 in-game hours,
+then returns empty. Only the OUTERMOST bay is active (bay index `count - 1`).
+
+**Order queue** — `queues` used to hold a flat `[x, y, ...]` list. It now holds
+`QueuedOrder` records so fetch and deliver can be queued too. A queued fetch
+holds the crate BY IDENTITY (indices shift as crates are spliced out of the
+level); a queued delivery holds no slot at all and asks `onResolveDrop` where to
+go at the moment it starts, because what is free depends on what got loaded in
+between. Stale orders are skipped rather than stalling the queue.
+
+**Interrupt safety** — `isBusy()` is true from the moment the arms start moving
+until the lift finishes. Orders given during that window are queued instead of
+replacing, so a robot can no longer drive off mid-lift. `settleGrab()` closes out
+a grab that an API-level order cut short; without it `liftT` was left part-way
+and the renderer drew the crate back at the spot it came from.
+
+Measured after the speed pass: 200cm forward hop 0.48s, 600cm sideways 1.43s,
+3000cm haul 5.78s. Full trailer (12 crates) loads, departs once the robot is
+clear, and returns empty.
+
+Not done: nothing was cut from this session's scope. Open items are in
+FUTURE_IDEAS.md — the other three hauler classes, the other three bays, and
+anything to do with what the trailer does with the cargo once it drives off.

@@ -1,4 +1,5 @@
 import { angleDelta, clamp, TAU } from '../core/mathUtils';
+import { CRATE_UNIT, canLift, HaulerClass, type HaulerClassValue } from './cargo';
 import type { Prop } from './level';
 import type { NavGrid } from './navGrid';
 
@@ -34,7 +35,7 @@ export const BotState = { Idle: 0, Moving: 1 } as const;
  * sequence once the robot has arrived, which is what produces the reverse-up,
  * arms-out, load-on-deck behaviour.
  */
-export const BotTask = { None: 0, Move: 1, Fetch: 2 } as const;
+export const BotTask = { None: 0, Move: 1, Fetch: 2, Deliver: 3 } as const;
 
 /** Stages of a fetch, after the drive is done. */
 const Phase = { Driving: 0, Aligning: 1, Reaching: 2, Closing: 3, Lifting: 4 } as const;
@@ -52,6 +53,40 @@ const ALIGN_DISTANCE = 6;
 
 /** Gap left between the robot's tail and the crate it is collecting. */
 const GRAB_GAP = 26;
+
+/**
+ * Braking, in cm/s^2.
+ *
+ * The old arrival ramp scaled speed by `distance / 260`, which meant a short
+ * hop never got out of first gear — a two metre nudge crawled the whole way.
+ * A real brake curve runs flat out until it genuinely has to slow down.
+ */
+const DECEL = 1100;
+/** How hard acceleration chases the target speed. */
+const ACCEL_RESPONSE = 9;
+
+/** What a queued order does when it comes up. */
+export const OrderKind = { Move: 0, Fetch: 1, Deliver: 2 } as const;
+export type OrderKindValue = (typeof OrderKind)[keyof typeof OrderKind];
+
+/**
+ * One entry in a robot's order queue.
+ *
+ * A queued fetch holds the crate BY IDENTITY rather than by index: crates are
+ * spliced out of the level as they are collected, so an index stored now points
+ * at a different crate by the time the order comes up.
+ *
+ * A queued delivery holds no slot at all. Which slot is free depends on what
+ * else has been loaded in the meantime, so it is resolved at the moment the
+ * order starts, through `onResolveDrop`.
+ */
+export interface QueuedOrder {
+  kind: OrderKindValue;
+  /** Where the order points, for drawing the queued route. */
+  x: number;
+  y: number;
+  prop?: Prop;
+}
 
 /** Waypoints for a robot currently under orders. */
 interface ActivePath {
@@ -88,8 +123,19 @@ export class BotPool {
   readonly phaseTime: Float32Array;
   /** Loader arm extension, 0 stowed to 1 fully out. */
   readonly armExtend: Float32Array;
-  /** Prop variant riding on the deck, or -1 when empty. */
-  readonly carrying: Int8Array;
+  /** What is riding on the deck. Material is -1 when the deck is empty. */
+  readonly carryMaterial: Int8Array;
+  readonly carryShape: Int8Array;
+  /** What this machine is rated to move. */
+  readonly hauler: Uint8Array;
+  /** Where a delivery is being set down. */
+  readonly placeX: Float32Array;
+  readonly placeY: Float32Array;
+  /** Which trailer slot a delivery belongs to, or -1. */
+  readonly placeSlot: Int32Array;
+  /** How far the load reaches along the approach axis, so the standoff suits
+   *  the crate actually being collected. */
+  readonly grabReach: Float32Array;
   /**
    * Unit vector from the crate out to where the robot parks, fixed when the
    * order is issued. Everything about the grab is measured along this, which is
@@ -114,7 +160,15 @@ export class BotPool {
    * [x, y, ...] list per robot. Shift + right click appends here instead of
    * replacing the order.
    */
-  private readonly queues = new Map<number, number[]>();
+  private readonly queues = new Map<number, QueuedOrder[]>();
+
+  /** Called when a robot finishes setting a load down. */
+  onDelivered: ((bot: number, slot: number, material: number, shape: number) => void) | null = null;
+  /**
+   * Asked where a QUEUED delivery should go, at the moment it starts. Returns
+   * null when there is nowhere to put it — no trailer docked, or it is full.
+   */
+  onResolveDrop: ((bot: number) => { slot: number; x: number; y: number } | null) | null = null;
 
   // Spatial hash for neighbour lookups during separation.
   private readonly hashCell = 300;
@@ -143,7 +197,13 @@ export class BotPool {
     this.taskPhase = new Uint8Array(capacity);
     this.phaseTime = new Float32Array(capacity);
     this.armExtend = new Float32Array(capacity);
-    this.carrying = new Int8Array(capacity);
+    this.carryMaterial = new Int8Array(capacity);
+    this.carryShape = new Int8Array(capacity);
+    this.hauler = new Uint8Array(capacity);
+    this.placeX = new Float32Array(capacity);
+    this.placeY = new Float32Array(capacity);
+    this.placeSlot = new Int32Array(capacity);
+    this.grabReach = new Float32Array(capacity);
     this.approachX = new Float32Array(capacity);
     this.approachY = new Float32Array(capacity);
     this.liftT = new Float32Array(capacity);
@@ -157,8 +217,8 @@ export class BotPool {
     this.x[i] = x;
     this.y[i] = y;
     this.angle[i] = angle;
-    this.speed[i] = 175;   // 1.65 m/s, typical for a warehouse AMR
-    this.turnRate[i] = 1.8;
+    this.speed[i] = 560;   // 5.6 m/s — game pace, not warehouse pace
+    this.turnRate[i] = 3.6;
     this.goalX[i] = x;
     this.goalY[i] = y;
     this.state[i] = BotState.Idle;
@@ -171,7 +231,10 @@ export class BotPool {
     this.taskPhase[i] = Phase.Driving;
     this.phaseTime[i] = 0;
     this.armExtend[i] = 0;
-    this.carrying[i] = -1;
+    this.carryMaterial[i] = -1;
+    this.carryShape[i] = 0;
+    this.hauler[i] = HaulerClass.Standard;
+    this.placeSlot[i] = -1;
     this.approachX[i] = 1;
     this.approachY[i] = 0;
     this.liftT[i] = 1;
@@ -204,14 +267,27 @@ export class BotPool {
     (this as { taskPhase: Uint8Array }).taskPhase = copy(this.taskPhase, (n) => new Uint8Array(n));
     (this as { phaseTime: Float32Array }).phaseTime = copy(this.phaseTime, (n) => new Float32Array(n));
     (this as { armExtend: Float32Array }).armExtend = copy(this.armExtend, (n) => new Float32Array(n));
+    (this as { grabReach: Float32Array }).grabReach = copy(this.grabReach, (n) => new Float32Array(n));
     (this as { approachX: Float32Array }).approachX = copy(this.approachX, (n) => new Float32Array(n));
     (this as { approachY: Float32Array }).approachY = copy(this.approachY, (n) => new Float32Array(n));
     (this as { liftT: Float32Array }).liftT = copy(this.liftT, (n) => new Float32Array(n));
     (this as { liftFromX: Float32Array }).liftFromX = copy(this.liftFromX, (n) => new Float32Array(n));
     (this as { liftFromY: Float32Array }).liftFromY = copy(this.liftFromY, (n) => new Float32Array(n));
-    const nextCarrying = new Int8Array(next);
-    nextCarrying.set(this.carrying);
-    (this as { carrying: Int8Array }).carrying = nextCarrying;
+    const growInt8 = (src: Int8Array): Int8Array => {
+      const dst = new Int8Array(next);
+      dst.set(src);
+      return dst;
+    };
+    (this as { carryMaterial: Int8Array }).carryMaterial = growInt8(this.carryMaterial);
+    (this as { carryShape: Int8Array }).carryShape = growInt8(this.carryShape);
+    const nextHauler = new Uint8Array(next);
+    nextHauler.set(this.hauler);
+    (this as { hauler: Uint8Array }).hauler = nextHauler;
+    (this as { placeX: Float32Array }).placeX = copy(this.placeX, (n) => new Float32Array(n));
+    (this as { placeY: Float32Array }).placeY = copy(this.placeY, (n) => new Float32Array(n));
+    const nextSlot = new Int32Array(next);
+    nextSlot.set(this.placeSlot);
+    (this as { placeSlot: Int32Array }).placeSlot = nextSlot;
     const nextTarget = new Int32Array(next);
     nextTarget.set(this.targetProp);
     (this as { targetProp: Int32Array }).targetProp = nextTarget;
@@ -227,6 +303,7 @@ export class BotPool {
     this.queues.delete(index);
     this.task[index] = BotTask.None;
     this.targetProp[index] = -1;
+    this.placeSlot[index] = -1;
     this.taskPhase[index] = Phase.Driving;
     this.phaseTime[index] = 0;
     this.state[index] = BotState.Idle;
@@ -234,9 +311,49 @@ export class BotPool {
     this.goalY[index] = this.y[index];
   }
 
-  /** Queued destinations behind the active one, as a flat [x, y, ...] list. */
-  queueOf(index: number): readonly number[] | undefined {
+  /** Orders waiting behind the active one. */
+  queueOf(index: number): readonly QueuedOrder[] | undefined {
     return this.queues.get(index);
+  }
+
+  /**
+   * True while a robot is physically committed to a grab.
+   *
+   * Once the arms are out the animation has to play through — driving off
+   * mid-lift left the crate hanging in the air. Orders given now are queued
+   * instead of replacing what it is doing.
+   */
+  isBusy(index: number): boolean {
+    const t = this.task[index];
+    return (t === BotTask.Fetch || t === BotTask.Deliver) && this.taskPhase[index] !== Phase.Driving;
+  }
+
+  /**
+   * Closes out a grab that a new order has cut short.
+   *
+   * Without this, an order given between the arms closing and the lift
+   * finishing left `liftT` part-way: the crate is on the robot's books but the
+   * renderer still draws it back at the spot it was picked up from.
+   */
+  private settleGrab(index: number): void {
+    if (this.taskPhase[index] === Phase.Driving) return;
+    this.liftT[index] = 1;
+    this.taskPhase[index] = Phase.Driving;
+    this.phaseTime[index] = 0;
+  }
+
+  /** Throws away pending orders without disturbing the active one. */
+  clearQueue(index: number): void {
+    this.queues.delete(index);
+  }
+
+  private pushOrder(index: number, order: QueuedOrder): void {
+    let queue = this.queues.get(index);
+    if (!queue) {
+      queue = [];
+      this.queues.set(index, queue);
+    }
+    queue.push(order);
   }
 
   /**
@@ -250,18 +367,14 @@ export class BotPool {
     const target = nav.nearestFree(tx, ty);
     if (!target) return false;
 
-    if (append && this.state[index] === BotState.Moving) {
-      let queue = this.queues.get(index);
-      if (!queue) {
-        queue = [];
-        this.queues.set(index, queue);
-      }
-      queue.push(target.x, target.y);
+    if (append && (this.state[index] === BotState.Moving || this.isBusy(index))) {
+      this.pushOrder(index, { kind: OrderKind.Move, x: target.x, y: target.y });
       return true;
     }
 
     if (!append) {
       this.queues.delete(index);
+      this.settleGrab(index);
       this.task[index] = BotTask.Move;
       this.targetProp[index] = -1;
     }
@@ -285,17 +398,37 @@ export class BotPool {
     return true;
   }
 
-  /** Starts the next queued destination, if there is one. */
+  /**
+   * Starts the next queued order, if there is one.
+   *
+   * Orders that can no longer be carried out — a crate someone else took, a
+   * delivery with nowhere to go — are dropped and the next one is tried, so one
+   * stale entry does not stall the whole queue.
+   */
   private advanceQueue(index: number, nav: NavGrid): boolean {
     const queue = this.queues.get(index);
-    if (!queue || queue.length < 2) {
-      this.queues.delete(index);
-      return false;
+    if (!queue) return false;
+
+    while (queue.length > 0) {
+      const order = queue.shift() as QueuedOrder;
+      if (queue.length === 0) this.queues.delete(index);
+
+      if (order.kind === OrderKind.Fetch && order.prop) {
+        const idx = this.props.indexOf(order.prop);
+        if (idx >= 0 && this.startFetch(index, idx, order.prop, nav)) return true;
+        continue;
+      }
+      if (order.kind === OrderKind.Deliver) {
+        const drop = this.onResolveDrop?.(index);
+        if (drop && this.startDeliver(index, drop.slot, drop.x, drop.y, nav)) return true;
+        continue;
+      }
+      this.task[index] = BotTask.Move;
+      this.targetProp[index] = -1;
+      if (this.driveTo(index, order.x, order.y, nav)) return true;
     }
-    const nx = queue.shift() as number;
-    const ny = queue.shift() as number;
-    if (queue.length === 0) this.queues.delete(index);
-    return this.driveTo(index, nx, ny, nav);
+    this.queues.delete(index);
+    return false;
   }
 
   /**
@@ -305,21 +438,39 @@ export class BotPool {
    * then turns so its TAIL faces the load — the deck and the arms are both at
    * the back, so it has to reverse up to the crate the way a real loader would.
    */
-  orderFetch(index: number, propIndex: number, prop: Prop, nav: NavGrid): boolean {
-    // Approach from whichever side the robot is already on, so it does not
-    // drive a lap around the crate for no reason.
-    let ax = this.x[index] - prop.x;
-    let ay = this.y[index] - prop.y;
-    const len = Math.hypot(ax, ay);
-    if (len < 1) {
-      ax = 1;
-      ay = 0;
-    } else {
-      ax /= len;
-      ay /= len;
+  orderFetch(
+    index: number, propIndex: number, prop: Prop, nav: NavGrid, append = false,
+  ): boolean {
+    // The rating is fixed, so it can be judged now. Whether the deck is free
+    // cannot be — a queued fetch runs after whatever unloads it.
+    if (!canLift(this.hauler[index] as HaulerClassValue, prop.material, prop.shape)) return false;
+    if (append && (this.state[index] === BotState.Moving || this.isBusy(index))) {
+      this.pushOrder(index, { kind: OrderKind.Fetch, x: prop.x, y: prop.y, prop });
+      return true;
     }
+    this.queues.delete(index);
+    this.settleGrab(index);
+    return this.startFetch(index, propIndex, prop, nav);
+  }
 
-    const standoff = BOT_HALF_LENGTH + prop.radius + GRAB_GAP;
+  /** Begins a fetch immediately. Does not touch the queue. */
+  private startFetch(index: number, propIndex: number, prop: Prop, nav: NavGrid): boolean {
+    if (!canLift(this.hauler[index] as HaulerClassValue, prop.material, prop.shape)) return false;
+    if (this.carryMaterial[index] >= 0) return false;
+    // Approach from whichever side the robot is already on — but SNAPPED to
+    // the nearest of the crate's four faces. Coming in on an arbitrary bearing
+    // leaves the crate sitting skewed on the deck however carefully the robot
+    // lines up, because there is no square face to line up against.
+    const raw = Math.atan2(this.y[index] - prop.y, this.x[index] - prop.x);
+    const quarter = Math.PI / 2;
+    const facing = prop.angle + Math.round((raw - prop.angle) / quarter) * quarter;
+    const ax = Math.cos(facing);
+    const ay = Math.sin(facing);
+
+    // How far the crate reaches along that face's normal.
+    const alongCrateX = Math.abs(Math.cos(facing - prop.angle)) > 0.5;
+    const reach = (alongCrateX ? prop.w : prop.h) * 0.5;
+    const standoff = BOT_HALF_LENGTH + reach + GRAB_GAP;
     let target = nav.nearestFree(prop.x + ax * standoff, prop.y + ay * standoff);
     if (!target) {
       // Try a few other bearings before giving up on it.
@@ -332,16 +483,12 @@ export class BotPool {
     }
     if (!target) return false;
 
-    this.queues.delete(index);
     if (!this.driveTo(index, target.x, target.y, nav)) return false;
-    // Fix the bearing now. Recomputing it from the robot's live position each
-    // frame lets it drift as the robot shuffles, and the crate ends up off to
-    // one side of the deck.
-    const bearingX = target.x - prop.x;
-    const bearingY = target.y - prop.y;
-    const bearing = Math.hypot(bearingX, bearingY) || 1;
-    this.approachX[index] = bearingX / bearing;
-    this.approachY[index] = bearingY / bearing;
+    // Fixed at order time. Recomputing from the robot's live position each
+    // frame lets it drift as the robot shuffles.
+    this.approachX[index] = ax;
+    this.approachY[index] = ay;
+    this.grabReach[index] = reach;
     this.task[index] = BotTask.Fetch;
     this.targetProp[index] = propIndex;
     this.taskPhase[index] = Phase.Driving;
@@ -349,11 +496,45 @@ export class BotPool {
     return true;
   }
 
-  /** Puts whatever is on the deck back on the floor, returning its variant. */
-  dropCarried(index: number): number {
-    const variant = this.carrying[index];
-    this.carrying[index] = -1;
-    return variant;
+  /**
+   * Sends a robot to set its load down at a point, squared up to it.
+   *
+   * Delivery always approaches from the south with the nose pointing out, since
+   * a trailer is loaded from its open end and the deck is at the robot's back.
+   */
+  orderDeliver(
+    index: number, slot: number, x: number, y: number, nav: NavGrid, append = false,
+  ): boolean {
+    if (append && (this.state[index] === BotState.Moving || this.isBusy(index))) {
+      // No slot is recorded: which one is free depends on what gets loaded
+      // between now and then, so it is resolved when the order comes up.
+      this.pushOrder(index, { kind: OrderKind.Deliver, x, y });
+      return true;
+    }
+    this.queues.delete(index);
+    this.settleGrab(index);
+    return this.startDeliver(index, slot, x, y, nav);
+  }
+
+  /** Begins a delivery immediately. Does not touch the queue. */
+  private startDeliver(
+    index: number, slot: number, x: number, y: number, nav: NavGrid,
+  ): boolean {
+    if (this.carryMaterial[index] < 0) return false;
+    const standoff = BOT_HALF_LENGTH + CRATE_UNIT * 0.5 + GRAB_GAP;
+    const target = nav.nearestFree(x, y + standoff);
+    if (!target) return false;
+    if (!this.driveTo(index, target.x, target.y, nav)) return false;
+    this.approachX[index] = 0;
+    this.approachY[index] = 1;
+    this.grabReach[index] = CRATE_UNIT * 0.5;
+    this.placeX[index] = x;
+    this.placeY[index] = y;
+    this.placeSlot[index] = slot;
+    this.task[index] = BotTask.Deliver;
+    this.taskPhase[index] = Phase.Driving;
+    this.phaseTime[index] = 0;
+    return true;
   }
 
   selectedIndices(out: number[] = []): number[] {
@@ -439,7 +620,9 @@ export class BotPool {
     nav: NavGrid,
     onPropTaken?: (propIndex: number) => void,
   ): void {
-    if (this.task[i] !== BotTask.Fetch) {
+    const isFetch = this.task[i] === BotTask.Fetch;
+    const isDeliver = this.task[i] === BotTask.Deliver;
+    if (!isFetch && !isDeliver) {
       // Arms drift back to stowed whenever nothing is being collected.
       if (this.armExtend[i] > 0) {
         this.armExtend[i] = Math.max(0, this.armExtend[i] - dt / STOW_TIME);
@@ -447,15 +630,27 @@ export class BotPool {
       return;
     }
 
-    const propIndex = this.targetProp[i];
-    const prop = this.props[propIndex];
-    if (!prop) {
+    // Fetching works towards a crate on the floor; delivering works towards a
+    // point the robot was told to set its load down on.
+    //
+    // Once the crate has been taken it is no longer IN the level, and its old
+    // index now belongs to whichever crate shifted down into the gap. Looking
+    // it up past that point marked the wrong crate on screen and, if it was the
+    // last one in the list, aborted the lift outright.
+    const taken = isFetch && this.carryMaterial[i] >= 0;
+    const prop = isFetch && !taken ? this.props[this.targetProp[i]] : undefined;
+    if (isFetch && !taken && !prop) {
       this.clearOrders(i);
       return;
     }
+    const anchorX = isFetch ? (taken ? this.liftFromX[i] : (prop as Prop).x) : this.placeX[i];
+    const anchorY = isFetch ? (taken ? this.liftFromY[i] : (prop as Prop).y) : this.placeY[i];
 
-    // Still driving: wait for the path to finish.
+    // Still driving: wait for the path to finish, arms tucked in.
     if (this.taskPhase[i] === Phase.Driving) {
+      if (this.armExtend[i] > 0) {
+        this.armExtend[i] = Math.max(0, this.armExtend[i] - dt / STOW_TIME);
+      }
       if (this.state[i] === BotState.Moving) return;
       this.taskPhase[i] = Phase.Aligning;
       this.phaseTime[i] = 0;
@@ -471,9 +666,9 @@ export class BotPool {
       // position leaves the crate off-centre and the grab looks wrong.
       const ax = this.approachX[i];
       const ay = this.approachY[i];
-      const standoff = BOT_HALF_LENGTH + prop.radius + GRAB_GAP;
-      const parkX = prop.x + ax * standoff;
-      const parkY = prop.y + ay * standoff;
+      const standoff = BOT_HALF_LENGTH + this.grabReach[i] + GRAB_GAP;
+      const parkX = anchorX + ax * standoff;
+      const parkY = anchorY + ay * standoff;
 
       const ease = Math.min(1, dt * 4.5);
       this.x[i] += (parkX - this.x[i]) * ease;
@@ -507,30 +702,49 @@ export class BotPool {
     if (this.taskPhase[i] === Phase.Closing) {
       this.armExtend[i] = 1;
       if (this.phaseTime[i] >= CLOSE_TIME) {
-        // The crate leaves the world here, but it does not appear on the deck
-        // yet: the renderer carries it up from where it was standing over the
-        // lift, so it rises rather than teleporting.
-        this.carrying[i] = prop.variant;
-        this.liftFromX[i] = prop.x;
-        this.liftFromY[i] = prop.y;
-        this.liftT[i] = 0;
-        onPropTaken?.(propIndex);
+        if (isFetch) {
+          // The crate leaves the world here, but it does not appear on the deck
+          // yet: the renderer carries it up from where it was standing over the
+          // lift, so it rises rather than teleporting.
+          const p = prop as Prop;
+          this.carryMaterial[i] = p.material;
+          this.carryShape[i] = p.shape;
+          this.liftFromX[i] = p.x;
+          this.liftFromY[i] = p.y;
+          this.liftT[i] = 0;
+          const removed = this.targetProp[i];
+          this.targetProp[i] = -1;
+          onPropTaken?.(removed);
+        } else {
+          // Setting down runs the same travel in reverse: the crate leaves the
+          // deck and descends to the mark.
+          this.liftFromX[i] = anchorX;
+          this.liftFromY[i] = anchorY;
+          this.liftT[i] = 1;
+        }
         this.taskPhase[i] = Phase.Lifting;
         this.phaseTime[i] = 0;
       }
       return;
     }
 
-    // Lifting: the crate comes off the floor and onto the deck while the arms
-    // draw back in with it.
-    this.liftT[i] = Math.min(1, this.phaseTime[i] / LIFT_TIME);
-    this.armExtend[i] = Math.max(0, 1 - this.phaseTime[i] / LIFT_TIME);
-    if (this.phaseTime[i] >= LIFT_TIME) {
-      this.liftT[i] = 1;
+    // The crate travels between the floor and the deck while the arms draw
+    // back in with it. Fetching runs 0 -> 1, delivering 1 -> 0.
+    const travel = Math.min(1, this.phaseTime[i] / LIFT_TIME);
+    this.liftT[i] = isFetch ? travel : 1 - travel;
+    this.armExtend[i] = Math.max(0, 1 - travel);
+    if (travel >= 1) {
       this.armExtend[i] = 0;
+      if (isDeliver) {
+        this.onDelivered?.(i, this.placeSlot[i], this.carryMaterial[i], this.carryShape[i]);
+        this.carryMaterial[i] = -1;
+        this.placeSlot[i] = -1;
+        this.liftT[i] = 1;
+      }
       this.task[i] = BotTask.None;
       this.targetProp[i] = -1;
       this.taskPhase[i] = Phase.Driving;
+      this.advanceQueue(i, nav);
     }
   }
 
@@ -547,7 +761,9 @@ export class BotPool {
 
     for (let i = 0; i < this.count; i++) {
       // A robot mid-grab is deliberately tucked up against its target.
-      const grabbing = this.task[i] === BotTask.Fetch && this.taskPhase[i] !== Phase.Driving;
+      const grabbing =
+        (this.task[i] === BotTask.Fetch || this.task[i] === BotTask.Deliver) &&
+        this.taskPhase[i] !== Phase.Driving;
       const cx = Math.floor(this.x[i] / this.hashCell);
       const cy = Math.floor(this.y[i] / this.hashCell);
       const cos = Math.cos(-this.angle[i]);
@@ -637,8 +853,12 @@ export class BotPool {
     if (path.cursor >= pts.length - 2 && dist < 14) {
       this.paths.delete(i);
       this.velocity[i] = 0;
-      // Roll straight on to the next queued waypoint, if the player stacked one.
-      if (!this.advanceQueue(i, nav)) this.state[i] = BotState.Idle;
+      // A fetch or a delivery still has its grab to play out. The queue waits
+      // for that; taking the next order here abandoned the crate on arrival.
+      this.state[i] = BotState.Idle;
+      if (this.task[i] === BotTask.Fetch || this.task[i] === BotTask.Deliver) return;
+      // Otherwise roll straight on to whatever was stacked behind this.
+      this.advanceQueue(i, nav);
       return;
     }
 
@@ -647,11 +867,12 @@ export class BotPool {
     const turn = clamp(delta, -this.turnRate[i] * dt, this.turnRate[i] * dt);
     this.angle[i] += turn;
 
-    // Slow into turns, and ease to a stop at the final waypoint.
-    const alignment = Math.max(0, 1 - Math.abs(delta) / 1.4);
-    const approach = isLast ? Math.min(1, dist / 260) : 1;
-    const target = this.speed[i] * alignment * approach;
-    this.velocity[i] += (target - this.velocity[i]) * Math.min(1, dt * 5);
+    // Slow into turns, and brake into the final waypoint on a real curve so a
+    // short move is still driven briskly rather than crept.
+    const alignment = Math.max(0, 1 - Math.abs(delta) / 1.9);
+    const brake = isLast ? Math.sqrt(2 * DECEL * Math.max(0, dist - 6)) : Infinity;
+    const target = Math.min(this.speed[i] * alignment, brake);
+    this.velocity[i] += (target - this.velocity[i]) * Math.min(1, dt * ACCEL_RESPONSE);
 
     const step = this.velocity[i] * dt;
     this.odometer[i] += step;

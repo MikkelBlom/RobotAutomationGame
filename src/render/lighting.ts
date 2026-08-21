@@ -2,7 +2,9 @@ import type { LightingState } from '../core/dayCycle';
 import type { Settings } from '../core/settings';
 import { FLOOR, TRAILER_DEPTH, TRAILER_WIDTH, type LevelGeometry } from '../sim/level';
 import { TrailerFleet } from '../sim/trailers';
-import { CRATE_ART_FILL, REGIONS } from './atlas';
+import { REGIONS } from './atlas';
+import { crateQuad, crateRegion, outlineQuad } from './crateArt';
+import { shapeSize, type CrateMaterialValue, type CrateShapeValue } from '../sim/cargo';
 import type { SpriteBatch } from './spriteBatch';
 
 /** Sodium vapour work lamps. */
@@ -241,20 +243,81 @@ export class LightingPass {
     }
   }
 
-  /** Abandoned cargo, into the albedo pass. */
+  /** Crates on the floor, into the albedo pass. */
   collectProps(batch: SpriteBatch, bounds: Bounds, settings: Settings): void {
     if (!settings.props) return;
     for (const prop of this.level.props) {
-      if (!visible(bounds, prop.x, prop.y, prop.size * 2)) continue;
-      const region =
-        prop.variant === 0 ? REGIONS.crateTimber
-        : prop.variant === 1 ? REGIONS.crateSteel
-        : REGIONS.palletStack;
-      // prop.size is the crate's real footprint; the quad has to be larger
-      // because the art does not fill its cell.
-      const s = prop.size / CRATE_ART_FILL;
-      batch.pushRegion(region, prop.x, prop.y, prop.angle, s, s, 1, 1, 1, 1);
+      if (!visible(bounds, prop.x, prop.y, prop.radius * 2)) continue;
+      const q = crateQuad(prop.shape);
+      batch.pushRegion(
+        crateRegion(prop.material, prop.shape),
+        prop.x, prop.y, prop.angle, q.w, q.h, 1, 1, 1, 1,
+      );
     }
+  }
+
+  /** Crates already loaded into a trailer, which travel with it. */
+  collectTrailerCargo(batch: SpriteBatch, fleet: TrailerFleet, bounds: Bounds): void {
+    for (const t of fleet.trailers) {
+      if (t.dock <= 0.001) continue;
+      const lit = 0.12 + 0.88 * t.dock;
+      const c = lit * t.tint;
+      for (let slot = 0; slot < t.cargo.length; slot++) {
+        const load = t.cargo[slot];
+        if (!load) continue;
+        const pos = TrailerFleet.slotPosition(t, slot);
+        if (!visible(bounds, pos.x, pos.y, 240)) continue;
+        const q = crateQuad(load.shape);
+        // Contact shadow first. A timber crate on a timber deck is otherwise
+        // indistinguishable from the boards it is standing on.
+        const size = shapeSize(load.shape);
+        batch.pushRegion(
+          REGIONS.hardShadow, pos.x, pos.y + 10, 0,
+          size.w * 1.18, size.h * 1.18, 0, 0, 0, 0.55 * t.dock,
+        );
+        batch.pushRegion(
+          crateRegion(load.material, load.shape),
+          pos.x, pos.y, 0, q.w, q.h, c, c, c, 1,
+        );
+      }
+    }
+  }
+
+  /**
+   * The ghosted mark showing where the load on a robot's deck should go.
+   *
+   * Only drawn while something is actually being carried — it is the target of
+   * the next right click, so it should not be on screen when there is nothing
+   * to put there.
+   */
+  collectDropGhost(
+    batch: SpriteBatch,
+    fleet: TrailerFleet,
+    bounds: Bounds,
+    material: CrateMaterialValue,
+    shape: CrateShapeValue,
+    pulse: number,
+  ): { x: number; y: number } | null {
+    for (const t of fleet.trailers) {
+      if (!TrailerFleet.isDockable(t)) continue;
+      const slot = TrailerFleet.nextFreeSlot(t);
+      if (slot < 0) continue;
+      const pos = TrailerFleet.slotPosition(t, slot);
+      if (!visible(bounds, pos.x, pos.y, 400)) return pos;
+
+      const q = crateQuad(shape);
+      batch.pushRegion(
+        crateRegion(material, shape), pos.x, pos.y, 0, q.w, q.h,
+        0.42, 0.86, 1.0, 0.18 + pulse * 0.10,
+      );
+      const o = outlineQuad(shape);
+      batch.pushRegion(
+        REGIONS.crateOutline, pos.x, pos.y, 0, o.w, o.h,
+        0.45, 0.89, 1.0, 0.65 + pulse * 0.35,
+      );
+      return pos;
+    }
+    return null;
   }
 
   /** Shadows the cargo throws, laid onto the floor. */
@@ -270,15 +333,20 @@ export class LightingPass {
     const directional = Math.min(1, lighting.sunIntensity * 0.85 + 0.15);
 
     for (const prop of this.level.props) {
-      if (!visible(bounds, prop.x, prop.y, prop.size * 3 + length)) continue;
+      if (!visible(bounds, prop.x, prop.y, prop.radius * 3 + length)) continue;
+      const footprint = Math.max(prop.w, prop.h);
       // A crate is about knee height, so its shadow is much shorter than a
       // column's for the same sun.
       pushCastShadow(
-        batch, prop.x, prop.y, prop.size * 0.95, angle, length * 0.55, 0.48 * directional,
+        batch, prop.x, prop.y, footprint * 0.95, angle, length * 0.55, 0.48 * directional,
       );
+      // prop.w/h are the WORLD-axis footprint, already turned. Passing them
+      // together with prop.angle rotated the shadow a second time, so a long
+      // crate cast its shadow across itself.
+      const canon = shapeSize(prop.shape);
       batch.pushRegion(
         REGIONS.hardShadow, prop.x, prop.y, prop.angle,
-        prop.size * 1.0, prop.size * 1.0, 0, 0, 0, 0.5,
+        canon.w * 1.05, canon.h * 1.05, 0, 0, 0, 0.5,
       );
     }
   }

@@ -31,6 +31,18 @@
 | Trailer arrive / depart cycle | Implemented | Reverses on, doors swing, dwells, closes, pulls away | 2026-08-21 | loading dock |
 | Hull-accurate cargo collision | Implemented | Rect-vs-circle push-out, so turning cannot clip a crate | 2026-08-21 | — |
 | Grime toggle | Implemented | Debug console; re-bakes the floor | 2026-08-21 | — |
+| Crate taxonomy (3 sizes x 2 materials) | Implemented | 1x1 / 1x2 / 2x2, timber and steel; `src/sim/cargo.ts` | 2026-08-21 | — |
+| Hauler class gating | Implemented | Standard lifts 1x1 timber only; Long / Big / Heavy refuse | 2026-08-21 | crate taxonomy |
+| Set crates down in a trailer | Implemented | Reverses onto the mark, arms out, crate lowers into the slot | 2026-08-21 | crate pickup |
+| Order marker on a targeted crate | Implemented | Amber corner brackets, pulsing, world-space | 2026-08-21 | — |
+| Drop mark in the trailer | Implemented | Cyan ghost of the load at the next free slot; right-click to place | 2026-08-21 | trailer cycle |
+| Trailer fill / depart / return cycle | Implemented | Leaves at 12/12 once clear, returns empty 2.5-5 in-game hours later | 2026-08-21 | trailer cycle |
+| Robot-in-trailer safety interlock | Implemented | Doors re-open rather than shut a robot in and drive off | 2026-08-21 | trailer cycle |
+| One bay unlocked | Implemented | Outermost bay only; the other three are shuttered | 2026-08-21 | loading dock |
+| Queued fetch / deliver orders | Implemented | Shift-right-click stacks haulage jobs, not just waypoints | 2026-08-21 | waypoint queue |
+| Grab is uninterruptible | Implemented | Orders during the animation queue instead of cancelling it | 2026-08-21 | — |
+| Long hauler / big hauler / heavy hauler | Planned | Needed for 1x2, 2x2 and steel crates respectively | — | hauler class gating |
+| Bays 1-3 unlock | Planned | Presumably a progression cost | — | one bay unlocked |
 | Flying robots | Planned | Must ignore terrain/congestion, cost energy | — | — |
 | Water robots | Planned | Opens the dock as usable space | — | — |
 | Props / machines on the floor | Planned | Deliberately deferred until the level is laid out | — | — |

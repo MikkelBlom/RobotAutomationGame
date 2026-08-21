@@ -1,7 +1,9 @@
 import type { LightingState } from '../core/dayCycle';
 import type { Settings } from '../core/settings';
 import { BOT_LENGTH, BOT_RADIUS, BOT_WIDTH, BotState, BotTask, type BotPool } from '../sim/bots';
-import { BOT_ART, CRATE_ART_FILL, REGIONS } from './atlas';
+import { BOT_ART, REGIONS } from './atlas';
+import { crateQuad, crateRegion, outlineQuad } from './crateArt';
+import type { CrateMaterialValue, CrateShapeValue } from '../sim/cargo';
 import { pushCastShadow, type Bounds } from './lighting';
 import type { SpriteBatch } from './spriteBatch';
 
@@ -38,9 +40,7 @@ const ARM_SPREAD_OUT = 0.62;
 /** How much a crate grows as it comes off the floor, selling the height. */
 const LIFT_RISE = 0.16;
 
-/** A carried crate is a Euro pallet's footprint, drawn at real size. */
-const CARRIED_FOOTPRINT = 120;
-const CARRIED_SIZE = CARRIED_FOOTPRINT / CRATE_ART_FILL;
+
 
 const BOT_FRAMES = [
   REGIONS.botBody0, REGIONS.botBody1, REGIONS.botBody2, REGIONS.botBody3,
@@ -97,13 +97,14 @@ export class EntityRenderer {
       // A crate being lifted leaves its shadow behind on the floor, shrinking
       // and fading as it rises.
       const t = b.liftT[i];
-      if (b.carrying[i] >= 0 && t < 1) {
+      if (b.carryMaterial[i] >= 0 && t < 1) {
         const e = t * t * (3 - 2 * t);
         const shrink = 1 - e * 0.45;
+        const q = crateQuad(b.carryShape[i] as CrateShapeValue);
         batch.pushRegion(
           REGIONS.hardShadow,
           b.liftFromX[i], b.liftFromY[i], b.angle[i],
-          CARRIED_SIZE * shrink, CARRIED_SIZE * shrink,
+          q.w * 0.8 * shrink, q.h * 0.8 * shrink,
           0, 0, 0, 0.55 * (1 - e * 0.7),
         );
       }
@@ -177,11 +178,12 @@ export class EntityRenderer {
         }
       }
 
-      if (b.carrying[i] >= 0) {
-        const region =
-          b.carrying[i] === 0 ? REGIONS.crateTimber
-          : b.carrying[i] === 1 ? REGIONS.crateSteel
-          : REGIONS.palletStack;
+      if (b.carryMaterial[i] >= 0) {
+        const region = crateRegion(
+          b.carryMaterial[i] as CrateMaterialValue,
+          b.carryShape[i] as CrateShapeValue,
+        );
+        const q = crateQuad(b.carryShape[i] as CrateShapeValue);
 
         // Where it ends up: on the deck, towards the back of the machine.
         const deckX = b.x[i] - cos * (BOT_LENGTH * 0.17);
@@ -189,9 +191,7 @@ export class EntityRenderer {
 
         const t = b.liftT[i];
         if (t >= 1) {
-          batch.pushRegion(
-            region, deckX, deckY, b.angle[i], CARRIED_SIZE, CARRIED_SIZE, 1, 1, 1, 1,
-          );
+          batch.pushRegion(region, deckX, deckY, b.angle[i], q.w, q.h, 1, 1, 1, 1);
         } else {
           // Travelling from the floor onto the deck. Ease it, and grow it a
           // little on the way: seen from above, rising towards the camera is
@@ -200,8 +200,7 @@ export class EntityRenderer {
           const cx = b.liftFromX[i] + (deckX - b.liftFromX[i]) * e;
           const cy = b.liftFromY[i] + (deckY - b.liftFromY[i]) * e;
           const rise = 1 + LIFT_RISE * Math.sin(e * Math.PI * 0.5);
-          const size = CARRIED_SIZE * rise;
-          batch.pushRegion(region, cx, cy, b.angle[i], size, size, 1, 1, 1, 1);
+          batch.pushRegion(region, cx, cy, b.angle[i], q.w * rise, q.h * rise, 1, 1, 1, 1);
         }
       }
     }
@@ -296,12 +295,12 @@ export class EntityRenderer {
       // Queued legs, straight and dimmer — they have not been pathed yet, so
       // showing a route here would be a lie. Numbered by size instead.
       const queue = b.queueOf(i);
-      if (queue && queue.length >= 2) {
+      if (queue && queue.length > 0) {
         let fromX = b.goalX[i];
         let fromY = b.goalY[i];
-        for (let q = 0; q < queue.length; q += 2) {
-          const toX = queue[q];
-          const toY = queue[q + 1];
+        for (let q = 0; q < queue.length; q++) {
+          const toX = queue[q].x;
+          const toY = queue[q].y;
           const legLen = Math.hypot(toX - fromX, toY - fromY);
           const ux = (toX - fromX) / (legLen || 1);
           const uy = (toY - fromY) / (legLen || 1);
@@ -327,6 +326,33 @@ export class EntityRenderer {
           fromY = toY;
         }
       }
+    }
+  }
+
+  /**
+   * Marks the crate a robot has been sent to collect, so it is obvious which
+   * one the order landed on before the robot has got anywhere near it.
+   */
+  drawOrderMarks(
+    batch: SpriteBatch,
+    bounds: Bounds,
+    props: ReadonlyArray<{ x: number; y: number; angle: number; shape: CrateShapeValue }>,
+    time: number,
+  ): void {
+    const b = this.bots;
+    const pulse = 0.5 + 0.5 * Math.sin(time * 3.2);
+    for (let i = 0; i < b.count; i++) {
+      // targetProp is cleared the instant the crate leaves the floor, so this
+      // only ever marks a crate that is still standing there.
+      if (b.task[i] !== BotTask.Fetch || b.targetProp[i] < 0) continue;
+      const prop = props[b.targetProp[i]];
+      if (!prop) continue;
+      if (!visible(bounds, prop.x, prop.y, 400)) continue;
+      const o = outlineQuad(prop.shape);
+      batch.pushRegion(
+        REGIONS.crateOutline, prop.x, prop.y, prop.angle, o.w, o.h,
+        1.0, 0.72, 0.24, 0.6 + pulse * 0.4,
+      );
     }
   }
 

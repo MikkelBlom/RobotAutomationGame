@@ -1,5 +1,6 @@
 import { makeRng, type Rng } from '../core/mathUtils';
-import { SHELL, TRAILER_DEPTH, type DockBay } from './level';
+import { CRATE_UNIT, type CrateMaterialValue, type CrateShapeValue } from './cargo';
+import { SHELL, TRAILER_DEPTH, TRAILER_WIDTH, type DockBay } from './level';
 
 /**
  * Road trailers working the loading bays.
@@ -19,6 +20,14 @@ export const TrailerState = {
   Leaving: 5,
 } as const;
 export type TrailerStateValue = (typeof TrailerState)[keyof typeof TrailerState];
+
+/** Slots a trailer holds, as columns across by rows deep. */
+export const SLOT_COLS = 3;
+export const SLOT_ROWS = 4;
+export const SLOT_COUNT = SLOT_COLS * SLOT_ROWS;
+
+/** Clear length left at the rear for a robot to work in. */
+const WORKING_LENGTH = 520;
 
 const ARRIVE_TIME = 3.4;
 const OPEN_TIME = 1.6;
@@ -41,6 +50,10 @@ export interface Trailer {
   doors: number;
   /** Per-trailer variation so a row of them does not look cloned. */
   tint: number;
+  /** What is loaded, indexed by slot. Null slots are empty. */
+  cargo: Array<{ material: CrateMaterialValue; shape: CrateShapeValue } | null>;
+  /** In-game hours still to wait before coming back. */
+  awayHours: number;
 }
 
 export class TrailerFleet {
@@ -51,8 +64,8 @@ export class TrailerFleet {
     this.rng = makeRng(seed ^ 0x71ac);
     for (let i = 0; i < bays.length; i++) {
       const bay = bays[i];
-      // Start the row out of step, so they are not all doing the same thing.
-      const docked = i % 2 === 1;
+      // Shuttered bays never take a trailer. Only one is in service so far.
+      const docked = bay.active;
       this.trailers.push({
         bay,
         state: docked ? TrailerState.Docked : TrailerState.Away,
@@ -61,6 +74,8 @@ export class TrailerFleet {
         dock: docked ? 1 : 0,
         doors: docked ? 1 : 0,
         tint: this.rng.range(0.82, 1.06),
+        cargo: new Array(SLOT_COUNT).fill(null),
+        awayHours: 0,
       });
       bay.occupied = docked;
     }
@@ -73,12 +88,23 @@ export class TrailerFleet {
 
   /**
    * Advances every trailer. Returns true when the set of dockable bays has
-   * changed and the nav grid needs re-rasterising.
+   * changed and the bay strip of the nav grid needs re-rasterising.
+   *
+   * `hours` is elapsed in-game hours, which is what a departed trailer's return
+   * is measured in — it should come back next shift, not in twenty seconds.
+   * `occupiedByRobot` reports whether anything is inside the trailer or in its
+   * mouth; a trailer will not shut its doors or pull out while that is true,
+   * because leaving with a robot aboard strands it outside the building.
    */
-  update(dt: number): boolean {
+  update(
+    dt: number,
+    hours: number,
+    occupiedByRobot: (bayX: number) => boolean,
+  ): boolean {
     let dockingChanged = false;
 
     for (const t of this.trailers) {
+      if (!t.bay.active) continue;
       const wasDockable = TrailerFleet.isDockable(t);
       t.elapsed += dt;
 
@@ -86,7 +112,12 @@ export class TrailerFleet {
         case TrailerState.Away:
           t.dock = 0;
           t.doors = 0;
-          if (t.elapsed >= t.hold) this.enter(t, TrailerState.Arriving);
+          t.awayHours = Math.max(0, t.awayHours - hours);
+          if (t.awayHours <= 0) {
+            // A fresh trailer, empty.
+            t.cargo.fill(null);
+            this.enter(t, TrailerState.Arriving);
+          }
           break;
 
         case TrailerState.Arriving: {
@@ -100,20 +131,27 @@ export class TrailerFleet {
         case TrailerState.Opening:
           t.dock = 1;
           t.doors = Math.min(1, t.elapsed / OPEN_TIME);
-          if (t.elapsed >= OPEN_TIME) {
-            this.enter(t, TrailerState.Docked);
-            t.hold = this.rng.range(26, 50);
-          }
+          if (t.elapsed >= OPEN_TIME) this.enter(t, TrailerState.Docked);
           break;
 
         case TrailerState.Docked:
           t.dock = 1;
           t.doors = 1;
-          if (t.elapsed >= t.hold) this.enter(t, TrailerState.Closing);
+          // It waits as long as it takes. A trailer leaves when it is loaded,
+          // not on a timer — and never while a robot is still aboard.
+          if (TrailerFleet.isFull(t) && !occupiedByRobot(t.bay.x)) {
+            this.enter(t, TrailerState.Closing);
+          }
           break;
 
         case TrailerState.Closing:
           t.dock = 1;
+          // Still checked here: a robot can drive back in mid-close.
+          if (occupiedByRobot(t.bay.x)) {
+            t.doors = Math.min(1, t.doors + dt / CLOSE_TIME);
+            if (t.doors >= 1) this.enter(t, TrailerState.Docked);
+            break;
+          }
           t.doors = Math.max(0, 1 - t.elapsed / CLOSE_TIME);
           if (t.elapsed >= CLOSE_TIME) this.enter(t, TrailerState.Leaving);
           break;
@@ -124,7 +162,7 @@ export class TrailerFleet {
           t.dock = 1 - p * p;
           if (p >= 1) {
             this.enter(t, TrailerState.Away);
-            t.hold = this.rng.range(10, 30);
+            t.awayHours = this.rng.range(2.5, 5);
           }
           break;
         }
@@ -138,6 +176,49 @@ export class TrailerFleet {
     }
 
     return dockingChanged;
+  }
+
+  /** Every slot loaded. */
+  static isFull(t: Trailer): boolean {
+    return t.cargo.every((c) => c !== null);
+  }
+
+  /**
+   * The slot that should be loaded next.
+   *
+   * Fills from the far end back, so the robot never has to get past something
+   * it has already set down to reach the next slot.
+   */
+  static nextFreeSlot(t: Trailer): number {
+    return t.cargo.findIndex((c) => c === null);
+  }
+
+  /** World position of a slot's centre. */
+  static slotPosition(t: Trailer, slot: number): { x: number; y: number } {
+    const col = slot % SLOT_COLS;
+    const row = Math.floor(slot / SLOT_COLS);
+    const rear = TrailerFleet.rearY(t);
+    // Row 0 is the far end of the trailer.
+    const far = rear - TRAILER_DEPTH + CRATE_UNIT * 0.5 + 60;
+    return {
+      x: t.bay.x + (col - (SLOT_COLS - 1) / 2) * CRATE_UNIT,
+      y: far + row * CRATE_UNIT,
+    };
+  }
+
+  /** Where the working area starts, measured back from the rear sill. */
+  static workingEdge(t: Trailer): number {
+    return TrailerFleet.rearY(t) - WORKING_LENGTH;
+  }
+
+  /** True if a point is inside this trailer's body or its mouth. */
+  static contains(t: Trailer, x: number, y: number, pad = 0): boolean {
+    const rear = TrailerFleet.rearY(t);
+    return (
+      Math.abs(x - t.bay.x) < TRAILER_WIDTH / 2 + pad &&
+      y < rear + pad &&
+      y > rear - TRAILER_DEPTH - pad
+    );
   }
 
   private enter(t: Trailer, state: TrailerStateValue): void {

@@ -28,6 +28,19 @@ export const BOT_ART = { cell: 256, halfLength: 110, halfWidth: 76 } as const;
  */
 export const CRATE_ART_FILL = 0.80;
 
+/**
+ * How much of its square cell each crate shape's art occupies.
+ *
+ * A 1x2 is drawn at its true 1:2 aspect inside the square cell, so the renderer
+ * can use a square quad and the art is never stretched — the alternative was
+ * squashing a 1x1's planks to fake a longer box.
+ */
+export const CRATE_FILL: Record<number, { w: number; h: number }> = {
+  0: { w: 0.80, h: 0.80 },
+  1: { w: 0.40, h: 0.80 },
+  2: { w: 0.80, h: 0.80 },
+};
+
 const CELLS = {
   /** Soft radial falloff — light pools. */
   radial: [0, 0, 256, 256],
@@ -59,6 +72,14 @@ const CELLS = {
 
   /** Loader arm, stowed at the cell's left edge, extending towards +x. */
   botArm: [1280, 256, 256, 256],
+
+  /** 1x2 and 2x2 crates. Authored at their own aspect inside a square cell. */
+  crateTimberLong: [0, 768, 256, 256],
+  crateTimberLarge: [256, 768, 256, 256],
+  crateSteelLong: [512, 768, 256, 256],
+  crateSteelLarge: [768, 768, 256, 256],
+  /** Square bracket outline: marks a targeted crate or a ghosted drop slot. */
+  crateOutline: [1024, 768, 256, 256],
 
   /** Trailer interior, roof off. Stretched to the trailer's real proportions. */
   trailerDeck: [1024, 512, 256, 256],
@@ -115,6 +136,8 @@ export function buildAtlas(seed: number): HTMLCanvasElement {
   drawBotArm(ctx);
   drawTrailerDeck(ctx, rng);
   drawTrailerDoor(ctx);
+  drawCrateVariants(ctx, seed);
+  drawCrateOutline(ctx);
   drawCone(ctx);
   drawRing(ctx);
   drawDot(ctx);
@@ -899,5 +922,153 @@ function drawTrailerDoor(ctx: CanvasRenderingContext2D): void {
   // Handle at the free end.
   ctx.fillStyle = '#8d9299';
   ctx.fillRect(h - 26, -thick * 0.2, 12, thick * 0.4);
+  ctx.restore();
+}
+
+/** Timber and steel crates at 1x2 and 2x2, drawn at their real aspect. */
+function drawCrateVariants(ctx: CanvasRenderingContext2D, seed: number): void {
+  const variants: Array<[SpriteName, boolean, number, number]> = [
+    ['crateTimberLong', false, 0.40, 0.80],
+    ['crateTimberLarge', false, 0.80, 0.80],
+    ['crateSteelLong', true, 0.40, 0.80],
+    ['crateSteelLarge', true, 0.80, 0.80],
+  ];
+  for (let i = 0; i < variants.length; i++) {
+    const [name, steel, fw, fh] = variants[i];
+    const rng = makeRng(seed ^ (0x51a0 + i * 977));
+    const { size } = cell(ctx, name);
+    const w = size * fw;
+    const h = size * fh;
+    if (steel) paintSteelBox(ctx, rng, w, h);
+    else paintTimberBox(ctx, rng, w, h);
+    ctx.restore();
+  }
+}
+
+function paintTimberBox(
+  ctx: CanvasRenderingContext2D,
+  rng: ReturnType<typeof makeRng>,
+  w: number,
+  h: number,
+): void {
+  const hw = w / 2;
+  const hh = h / 2;
+  ctx.fillStyle = '#6f5936';
+  ctx.beginPath();
+  ctx.roundRect(-hw, -hh, w, h, 5);
+  ctx.fill();
+
+  // Lid boards run the long way, which is what makes the shape readable.
+  const along = w >= h;
+  const count = Math.max(4, Math.round((along ? h : w) / 22));
+  for (let i = 0; i < count; i++) {
+    const shade = 0.86 + rng.next() * 0.28;
+    ctx.fillStyle = `rgb(${Math.round(133 * shade)},${Math.round(106 * shade)},${Math.round(63 * shade)})`;
+    if (along) {
+      const bh = (h - 10) / count;
+      ctx.fillRect(-hw + 5, -hh + 5 + i * bh, w - 10, bh - 3);
+    } else {
+      const bw = (w - 10) / count;
+      ctx.fillRect(-hw + 5 + i * bw, -hh + 5, bw - 3, h - 10);
+    }
+  }
+
+  ctx.strokeStyle = 'rgba(58,45,26,0.85)';
+  ctx.lineWidth = 7;
+  ctx.strokeRect(-hw + 4, -hh + 4, w - 8, h - 8);
+  ctx.strokeStyle = 'rgba(120,110,96,0.5)';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(-hw + 14, -hh + 4);
+  ctx.lineTo(-hw + 14, hh - 4);
+  ctx.moveTo(hw - 14, -hh + 4);
+  ctx.lineTo(hw - 14, hh - 4);
+  ctx.stroke();
+
+  for (let i = 0; i < 24; i++) {
+    ctx.globalAlpha = rng.range(0.06, 0.24);
+    ctx.fillStyle = rng.chance(0.5) ? '#2c2418' : '#7a4520';
+    ctx.beginPath();
+    ctx.ellipse(rng.range(-hw, hw), rng.range(-hh, hh),
+      rng.range(4, 18), rng.range(3, 13), rng.range(0, TAU), 0, TAU);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function paintSteelBox(
+  ctx: CanvasRenderingContext2D,
+  rng: ReturnType<typeof makeRng>,
+  w: number,
+  h: number,
+): void {
+  const hw = w / 2;
+  const hh = h / 2;
+  ctx.fillStyle = '#4d565c';
+  ctx.beginPath();
+  ctx.roundRect(-hw, -hh, w, h, 8);
+  ctx.fill();
+  ctx.fillStyle = '#5d676e';
+  ctx.beginPath();
+  ctx.roundRect(-hw + 7, -hh + 7, w - 14, h - 14, 5);
+  ctx.fill();
+
+  ctx.strokeStyle = 'rgba(22,26,29,0.55)';
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  for (let y = -hh + 22; y < hh - 12; y += 22) {
+    ctx.moveTo(-hw + 12, y);
+    ctx.lineTo(hw - 12, y);
+  }
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(255,255,255,0.09)';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  for (let y = -hh + 25; y < hh - 12; y += 22) {
+    ctx.moveTo(-hw + 12, y);
+    ctx.lineTo(hw - 12, y);
+  }
+  ctx.stroke();
+
+  ctx.fillStyle = '#2b3135';
+  for (const sx of [-1, 1]) {
+    for (const sy of [-1, 1]) {
+      ctx.beginPath();
+      ctx.roundRect(sx * (hw - 20) - 8, sy * (hh - 20) - 8, 16, 16, 3);
+      ctx.fill();
+    }
+  }
+  ctx.strokeStyle = 'rgba(16,19,21,0.7)';
+  ctx.lineWidth = 5;
+  ctx.strokeRect(-hw, -hh, w, h);
+
+  for (let i = 0; i < 28; i++) {
+    ctx.globalAlpha = rng.range(0.08, 0.3);
+    ctx.fillStyle = rng.chance(0.65) ? '#7a4520' : '#5c3116';
+    ctx.beginPath();
+    ctx.ellipse(rng.range(-hw, hw), rng.range(-hh, hh),
+      rng.range(4, 16), rng.range(3, 12), rng.range(0, TAU), 0, TAU);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+/** Corner brackets. Tinted at draw time: an order marker or a drop ghost. */
+function drawCrateOutline(ctx: CanvasRenderingContext2D): void {
+  const { size } = cell(ctx, 'crateOutline');
+  const h = size * 0.40;
+  const arm = h * 0.42;
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 11;
+  ctx.lineCap = 'square';
+  ctx.beginPath();
+  for (const sx of [-1, 1]) {
+    for (const sy of [-1, 1]) {
+      ctx.moveTo(sx * h, sy * h - sy * arm);
+      ctx.lineTo(sx * h, sy * h);
+      ctx.lineTo(sx * h - sx * arm, sy * h);
+    }
+  }
+  ctx.stroke();
   ctx.restore();
 }

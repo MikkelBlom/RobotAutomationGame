@@ -234,3 +234,39 @@ building before looking at a single screenshot.
   argues for a mask texture the composite pass samples.
 - Does the loading dock belong in the level polygon (a notch in the north-east
   wall) or as a prop layer on top of the shell?
+
+## Gameplay-loop lessons (2026-08-21)
+
+**A sprite's quad comes from the canonical footprint, never the rotated one.**
+`Prop.w/h` are the WORLD-axis footprint — already turned by `prop.angle`. Passing
+them to `pushRegion` *together with* `prop.angle` rotates the thing twice. Long
+crates cast their shadow across themselves. Rule: pass `shapeSize(shape)` with
+`prop.angle`, or `prop.w/h` with angle 0. Never mix.
+
+**An index into a mutable array is not a handle.** Crates are spliced out of
+`level.props` as they are collected, so every index above the removed one shifts.
+Two bugs came out of this: the amber "about to be picked up" bracket jumped to a
+different crate during the lift, and taking the LAST crate in the list aborted
+its own lift (`props[index]` became undefined). Fixes: clear `targetProp` the
+instant the crate leaves the floor, and hold queued fetches by object identity.
+
+**A brake curve, not a linear ramp.** Arrival used `speed * (dist / 260)`, which
+means a short hop never leaves first gear — a two metre nudge crawled the whole
+way. `sqrt(2 * DECEL * dist)` runs flat out until it genuinely has to slow.
+Same for cornering: `1 - |delta| / 1.4` came to a dead stop at 90°; 1.9 lets it
+carry some speed through the turn.
+
+**The queue must not jump the gun.** `advanceQueue` used to fire the moment a
+path completed. A fetch's path completes when the robot reaches the standoff —
+i.e. before the grab has played at all — so the next queued order immediately
+abandoned the crate. The queue now advances when the TASK finishes, not when the
+path does.
+
+**Timber on timber is invisible.** Crates loaded into the trailer vanished into
+the deck boards. A contact shadow under each one is what separates them. Same
+principle as the floor props: the shadow goes into the albedo pass, before the
+object.
+
+**No text UI.** Refused orders fail silently — a toast was tried and rejected.
+The feedback has to be in the world (the amber bracket, the cyan drop mark) or
+not at all.
