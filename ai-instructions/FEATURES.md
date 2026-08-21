@@ -27,7 +27,8 @@
 | Loading dock, 4 bays | Implemented | Black seal when empty; lit trailer interior when occupied | 2026-08-21 | — |
 | Dark outside the shell | Implemented | Everything beyond the walls is black except a docked trailer | 2026-08-21 | — |
 | Track animation | Implemented | Four baked frames picked from distance driven | 2026-08-21 | — |
-| Crate pickup with loader arms | Implemented | Reverse up, arms out, load onto deck; right-click a crate | 2026-08-21 | — |
+| Crate pickup with loader arms | Implemented | Reverse up, arms out, crate lifts onto the deck; right-click a crate | 2026-08-21 | — |
+| Trailer arrive / depart cycle | Implemented | Reverses on, doors swing, dwells, closes, pulls away | 2026-08-21 | loading dock |
 | Hull-accurate cargo collision | Implemented | Rect-vs-circle push-out, so turning cannot clip a crate | 2026-08-21 | — |
 | Grime toggle | Implemented | Debug console; re-bakes the floor | 2026-08-21 | — |
 | Flying robots | Planned | Must ignore terrain/congestion, cost energy | — | — |

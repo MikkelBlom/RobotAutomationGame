@@ -1,6 +1,7 @@
 import type { LightingState } from '../core/dayCycle';
 import type { Settings } from '../core/settings';
-import type { LevelGeometry } from '../sim/level';
+import { FLOOR, TRAILER_DEPTH, TRAILER_WIDTH, type LevelGeometry } from '../sim/level';
+import { TrailerFleet } from '../sim/trailers';
 import { CRATE_ART_FILL, REGIONS } from './atlas';
 import type { SpriteBatch } from './spriteBatch';
 
@@ -157,6 +158,86 @@ export class LightingPass {
       if (!visible(bounds, col.x, col.y, col.size * 2)) continue;
       const s = col.size * 1.9;
       batch.pushRegion(REGIONS.column, col.x, col.y, 0, s, s, 1, 1, 1, 1);
+    }
+  }
+
+  /**
+   * Trailers at the loading bays, into the albedo pass.
+   *
+   * They darken as they pull away, which is what sells them disappearing into
+   * the night rather than sliding off an edge — everything else out beyond the
+   * shell is black.
+   */
+  collectTrailers(batch: SpriteBatch, fleet: TrailerFleet, bounds: Bounds): void {
+    for (const t of fleet.trailers) {
+      if (t.dock <= 0.001) continue;
+      const rear = TrailerFleet.rearY(t);
+      const midY = rear - TRAILER_DEPTH / 2;
+      if (!visible(bounds, t.bay.x, midY, TRAILER_DEPTH)) continue;
+
+      // Out past the wall there is no light, so fade it out as it goes.
+      const lit = 0.12 + 0.88 * t.dock;
+      const c = lit * t.tint;
+      batch.pushRegion(
+        REGIONS.trailerDeck, t.bay.x, midY, 0,
+        TRAILER_WIDTH, TRAILER_DEPTH, c, c, c, 1,
+      );
+
+      // Once it is on the bumpers with its doors open, the deck carries on
+      // through the wall opening to meet the floor — that is what the leveller
+      // plate does, and without it the trailer reads as a separate box parked
+      // behind a black slot.
+      const bridge = Math.max(0, (t.dock - 0.92) / 0.08) * Math.min(1, t.doors * 2);
+      if (bridge > 0.01) {
+        const depth = FLOOR.y - rear;
+        batch.pushRegion(
+          REGIONS.trailerDeck, t.bay.x, rear + depth / 2, 0,
+          TRAILER_WIDTH * 0.96, depth, c * 0.7, c * 0.7, c * 0.7, bridge,
+        );
+      }
+
+      // Rear doors, hinged at the trailer's back corners. Shut they meet in
+      // the middle; open they swing back along the sides.
+      const leafLength = TRAILER_WIDTH / 2;
+      // The art's leaf fills 0.17 of its cell, so the quad has to be that much
+      // taller than the thickness we actually want to see.
+      const leafThick = 78;
+      const swing = t.doors;
+      for (const side of [-1, 1]) {
+        const hingeX = t.bay.x + side * (TRAILER_WIDTH / 2);
+        const closed = side < 0 ? 0 : Math.PI;
+        const open = side < 0 ? -Math.PI / 2 : -Math.PI / 2 + Math.PI * 2;
+        const angle = closed + (open - closed) * swing;
+        batch.pushRegion(
+          REGIONS.trailerDoor,
+          hingeX + Math.cos(angle) * leafLength * 0.5,
+          rear + Math.sin(angle) * leafLength * 0.5,
+          angle,
+          leafLength, leafThick / 0.17,
+          c, c, c, 1,
+        );
+      }
+    }
+  }
+
+  /** Interior lighting inside a trailer, only while one is actually there. */
+  collectTrailerLights(
+    batch: SpriteBatch,
+    fleet: TrailerFleet,
+    bounds: Bounds,
+    settings: Settings,
+  ): void {
+    if (!settings.lighting) return;
+    for (const t of fleet.trailers) {
+      if (t.dock < 0.9 || t.doors < 0.15) continue;
+      const midY = TrailerFleet.rearY(t) - TRAILER_DEPTH * 0.45;
+      if (!visible(bounds, t.bay.x, midY, TRAILER_DEPTH)) continue;
+      const level = t.doors * 0.8;
+      const d = TRAILER_DEPTH * 1.5;
+      batch.pushRegion(
+        REGIONS.radial, t.bay.x, midY, 0, d, d,
+        1.0, 0.82, 0.6, level * 0.55,
+      );
     }
   }
 

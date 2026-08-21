@@ -37,12 +37,18 @@ export const BotState = { Idle: 0, Moving: 1 } as const;
 export const BotTask = { None: 0, Move: 1, Fetch: 2 } as const;
 
 /** Stages of a fetch, after the drive is done. */
-const Phase = { Driving: 0, Aligning: 1, Reaching: 2, Closing: 3, Stowing: 4 } as const;
+const Phase = { Driving: 0, Aligning: 1, Reaching: 2, Closing: 3, Lifting: 4 } as const;
 
 /** How long each stage of the grab takes, in seconds. */
 const REACH_TIME = 0.75;
 const CLOSE_TIME = 0.30;
+/** Raising the crate off the floor and setting it on the deck. */
+const LIFT_TIME = 0.85;
+/** Arms returning to their recesses once nothing is being collected. */
 const STOW_TIME = 0.65;
+/** How precisely the robot has to be squared up before it reaches. */
+const ALIGN_ANGLE = 0.035;
+const ALIGN_DISTANCE = 6;
 
 /** Gap left between the robot's tail and the crate it is collecting. */
 const GRAB_GAP = 26;
@@ -84,6 +90,18 @@ export class BotPool {
   readonly armExtend: Float32Array;
   /** Prop variant riding on the deck, or -1 when empty. */
   readonly carrying: Int8Array;
+  /**
+   * Unit vector from the crate out to where the robot parks, fixed when the
+   * order is issued. Everything about the grab is measured along this, which is
+   * what keeps the crate square to the robot instead of off to one side.
+   */
+  readonly approachX: Float32Array;
+  readonly approachY: Float32Array;
+  /** Lift animation, 0 on the floor to 1 settled on the deck. */
+  readonly liftT: Float32Array;
+  /** Where the crate was picked up from, so the lift can start there. */
+  readonly liftFromX: Float32Array;
+  readonly liftFromY: Float32Array;
 
   /**
    * Only robots actually under orders carry a path, and you command squads, not
@@ -126,6 +144,11 @@ export class BotPool {
     this.phaseTime = new Float32Array(capacity);
     this.armExtend = new Float32Array(capacity);
     this.carrying = new Int8Array(capacity);
+    this.approachX = new Float32Array(capacity);
+    this.approachY = new Float32Array(capacity);
+    this.liftT = new Float32Array(capacity);
+    this.liftFromX = new Float32Array(capacity);
+    this.liftFromY = new Float32Array(capacity);
   }
 
   spawn(x: number, y: number, angle = 0): number {
@@ -149,6 +172,11 @@ export class BotPool {
     this.phaseTime[i] = 0;
     this.armExtend[i] = 0;
     this.carrying[i] = -1;
+    this.approachX[i] = 1;
+    this.approachY[i] = 0;
+    this.liftT[i] = 1;
+    this.liftFromX[i] = x;
+    this.liftFromY[i] = y;
     return i;
   }
 
@@ -176,6 +204,11 @@ export class BotPool {
     (this as { taskPhase: Uint8Array }).taskPhase = copy(this.taskPhase, (n) => new Uint8Array(n));
     (this as { phaseTime: Float32Array }).phaseTime = copy(this.phaseTime, (n) => new Float32Array(n));
     (this as { armExtend: Float32Array }).armExtend = copy(this.armExtend, (n) => new Float32Array(n));
+    (this as { approachX: Float32Array }).approachX = copy(this.approachX, (n) => new Float32Array(n));
+    (this as { approachY: Float32Array }).approachY = copy(this.approachY, (n) => new Float32Array(n));
+    (this as { liftT: Float32Array }).liftT = copy(this.liftT, (n) => new Float32Array(n));
+    (this as { liftFromX: Float32Array }).liftFromX = copy(this.liftFromX, (n) => new Float32Array(n));
+    (this as { liftFromY: Float32Array }).liftFromY = copy(this.liftFromY, (n) => new Float32Array(n));
     const nextCarrying = new Int8Array(next);
     nextCarrying.set(this.carrying);
     (this as { carrying: Int8Array }).carrying = nextCarrying;
@@ -301,6 +334,14 @@ export class BotPool {
 
     this.queues.delete(index);
     if (!this.driveTo(index, target.x, target.y, nav)) return false;
+    // Fix the bearing now. Recomputing it from the robot's live position each
+    // frame lets it drift as the robot shuffles, and the crate ends up off to
+    // one side of the deck.
+    const bearingX = target.x - prop.x;
+    const bearingY = target.y - prop.y;
+    const bearing = Math.hypot(bearingX, bearingY) || 1;
+    this.approachX[index] = bearingX / bearing;
+    this.approachY[index] = bearingY / bearing;
     this.task[index] = BotTask.Fetch;
     this.targetProp[index] = propIndex;
     this.taskPhase[index] = Phase.Driving;
@@ -424,12 +465,30 @@ export class BotPool {
     this.phaseTime[i] += dt;
 
     if (this.taskPhase[i] === Phase.Aligning) {
-      // The deck and arms are at the back, so point the NOSE away from the load.
-      const want = Math.atan2(this.y[i] - prop.y, this.x[i] - prop.x);
+      // Square up ON the crate: slide onto the approach line at the right
+      // standoff and point the NOSE away from the load, since the deck and the
+      // arms are both at the back. Turning on the spot without correcting
+      // position leaves the crate off-centre and the grab looks wrong.
+      const ax = this.approachX[i];
+      const ay = this.approachY[i];
+      const standoff = BOT_HALF_LENGTH + prop.radius + GRAB_GAP;
+      const parkX = prop.x + ax * standoff;
+      const parkY = prop.y + ay * standoff;
+
+      const ease = Math.min(1, dt * 4.5);
+      this.x[i] += (parkX - this.x[i]) * ease;
+      this.y[i] += (parkY - this.y[i]) * ease;
+
+      const want = Math.atan2(ay, ax);
       const delta = angleDelta(this.angle[i], want);
-      const step = clamp(delta, -this.turnRate[i] * dt, this.turnRate[i] * dt);
-      this.angle[i] += step;
-      if (Math.abs(delta) < 0.05 || this.phaseTime[i] > 4) {
+      this.angle[i] += clamp(delta, -this.turnRate[i] * dt, this.turnRate[i] * dt);
+
+      const offset = Math.hypot(parkX - this.x[i], parkY - this.y[i]);
+      const squared = Math.abs(delta) < ALIGN_ANGLE && offset < ALIGN_DISTANCE;
+      if (squared || this.phaseTime[i] > 5) {
+        this.x[i] = parkX;
+        this.y[i] = parkY;
+        this.angle[i] = want;
         this.taskPhase[i] = Phase.Reaching;
         this.phaseTime[i] = 0;
       }
@@ -448,18 +507,26 @@ export class BotPool {
     if (this.taskPhase[i] === Phase.Closing) {
       this.armExtend[i] = 1;
       if (this.phaseTime[i] >= CLOSE_TIME) {
-        // The crate leaves the world and rides on the deck from here.
+        // The crate leaves the world here, but it does not appear on the deck
+        // yet: the renderer carries it up from where it was standing over the
+        // lift, so it rises rather than teleporting.
         this.carrying[i] = prop.variant;
+        this.liftFromX[i] = prop.x;
+        this.liftFromY[i] = prop.y;
+        this.liftT[i] = 0;
         onPropTaken?.(propIndex);
-        this.taskPhase[i] = Phase.Stowing;
+        this.taskPhase[i] = Phase.Lifting;
         this.phaseTime[i] = 0;
       }
       return;
     }
 
-    // Stowing.
-    this.armExtend[i] = Math.max(0, 1 - this.phaseTime[i] / STOW_TIME);
-    if (this.phaseTime[i] >= STOW_TIME) {
+    // Lifting: the crate comes off the floor and onto the deck while the arms
+    // draw back in with it.
+    this.liftT[i] = Math.min(1, this.phaseTime[i] / LIFT_TIME);
+    this.armExtend[i] = Math.max(0, 1 - this.phaseTime[i] / LIFT_TIME);
+    if (this.phaseTime[i] >= LIFT_TIME) {
+      this.liftT[i] = 1;
       this.armExtend[i] = 0;
       this.task[i] = BotTask.None;
       this.targetProp[i] = -1;

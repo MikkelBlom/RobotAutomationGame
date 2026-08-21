@@ -17,6 +17,7 @@ import { COMPOSITE_FRAG, FULLSCREEN_VERT } from './shaders';
 import { SpriteBatch } from './spriteBatch';
 import { WaterLayer } from './water';
 import { WORLD, WORLD_H, WORLD_W, type DockBay, type LevelGeometry } from '../sim/level';
+import type { TrailerFleet } from '../sim/trailers';
 
 export interface FrameContext {
   camera: Camera;
@@ -26,6 +27,8 @@ export interface FrameContext {
   level: LevelGeometry;
   /** Seconds since start, used for animation. */
   time: number;
+  /** Loading-bay trailers, which arrive and leave. */
+  trailers?: TrailerFleet;
   /** Filled by the game layer: robots, order trails, selection. */
   drawEntities?: (batch: SpriteBatch, bounds: Bounds) => void;
   drawEntityShadows?: (batch: SpriteBatch, bounds: Bounds) => void;
@@ -216,6 +219,7 @@ export class Renderer {
     this.entityBatch.begin();
     pass?.collectColumns(this.entityBatch, bounds, ctx.settings);
     pass?.collectProps(this.entityBatch, bounds, ctx.settings);
+    if (ctx.trailers) pass?.collectTrailers(this.entityBatch, ctx.trailers, bounds);
     ctx.drawEntities?.(this.entityBatch, bounds);
     sprites += this.entityBatch.length;
     this.entityBatch.flush(view, this.atlasTexture);
@@ -235,6 +239,7 @@ export class Renderer {
     this.lightBatch.begin();
     pass?.collectDaylight(this.lightBatch, ctx.lighting, bounds, ctx.settings);
     pass?.collectLamps(this.lightBatch, ctx.lighting, bounds, ctx.time, ctx.settings);
+    if (ctx.trailers) pass?.collectTrailerLights(this.lightBatch, ctx.trailers, bounds, ctx.settings);
     ctx.drawEntityLights?.(this.lightBatch, bounds);
     sprites += this.lightBatch.length;
     this.lightBatch.flush(view, this.atlasTexture);

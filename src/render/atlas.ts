@@ -60,6 +60,11 @@ const CELLS = {
   /** Loader arm, stowed at the cell's left edge, extending towards +x. */
   botArm: [1280, 256, 256, 256],
 
+  /** Trailer interior, roof off. Stretched to the trailer's real proportions. */
+  trailerDeck: [1024, 512, 256, 256],
+  /** One rear door leaf, hinged at the left edge of its cell. */
+  trailerDoor: [1280, 512, 256, 256],
+
   /** Ground robot body. Four frames, tracks advanced a quarter pitch each. */
   botBody0: [0, 512, 256, 256],
   botBody1: [256, 512, 256, 256],
@@ -108,6 +113,8 @@ export function buildAtlas(seed: number): HTMLCanvasElement {
   for (let frame = 0; frame < 4; frame++) drawBotBody(ctx, makeRng(seed ^ 0x4a71), frame);
   drawBotGlow(ctx);
   drawBotArm(ctx);
+  drawTrailerDeck(ctx, rng);
+  drawTrailerDoor(ctx);
   drawCone(ctx);
   drawRing(ctx);
   drawDot(ctx);
@@ -789,5 +796,108 @@ function drawHardShadow(ctx: CanvasRenderingContext2D): void {
     ctx.fill();
   }
   ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+/**
+ * Trailer interior seen from above with the roof off, matching how the hall
+ * itself is drawn. Authored to be stretched along its length: the decking and
+ * the side walls both run that way, so distortion does not show.
+ */
+function drawTrailerDeck(ctx: CanvasRenderingContext2D, rng: ReturnType<typeof makeRng>): void {
+  const { size } = cell(ctx, 'trailerDeck');
+  const h = size / 2;
+
+  // Body shell, just proud of the interior.
+  ctx.fillStyle = '#2c3238';
+  ctx.fillRect(-h, -h, size, size);
+
+  // Worn hardwood decking, planks running the length.
+  ctx.fillStyle = '#5e5138';
+  ctx.fillRect(-h + 16, -h, size - 32, size);
+  ctx.strokeStyle = 'rgba(30,24,16,0.5)';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  for (let x = -h + 30; x < h - 16; x += 15) {
+    ctx.moveTo(x, -h);
+    ctx.lineTo(x, h);
+  }
+  ctx.stroke();
+
+  // Ribbed side walls.
+  ctx.fillStyle = '#3d444a';
+  ctx.fillRect(-h, -h, 16, size);
+  ctx.fillRect(h - 16, -h, 16, size);
+  ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  for (let y = -h; y < h; y += 13) {
+    ctx.moveTo(-h, y);
+    ctx.lineTo(-h + 16, y);
+    ctx.moveTo(h - 16, y);
+    ctx.lineTo(h, y);
+  }
+  ctx.stroke();
+
+  // Load restraint rails down each side.
+  ctx.fillStyle = 'rgba(190,196,200,0.22)';
+  ctx.fillRect(-h + 20, -h, 5, size);
+  ctx.fillRect(h - 25, -h, 5, size);
+
+  // Grime and scuffing from years of pallets.
+  for (let i = 0; i < 40; i++) {
+    ctx.globalAlpha = rng.range(0.05, 0.2);
+    ctx.fillStyle = rng.chance(0.5) ? '#241d13' : '#7a4520';
+    ctx.beginPath();
+    ctx.ellipse(
+      rng.range(-h, h), rng.range(-h, h),
+      rng.range(6, 26), rng.range(4, 18), rng.range(0, TAU), 0, TAU,
+    );
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+/**
+ * One rear door leaf. Hinged at the LEFT edge of the cell and extending to +x,
+ * so the renderer can pivot it about that edge to swing it open.
+ */
+function drawTrailerDoor(ctx: CanvasRenderingContext2D): void {
+  const { size } = cell(ctx, 'trailerDoor');
+  const h = size / 2;
+  const thick = size * 0.17;
+
+  ctx.fillStyle = '#454c53';
+  ctx.beginPath();
+  ctx.roundRect(-h, -thick / 2, size, thick, 5);
+  ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.13)';
+  ctx.fillRect(-h, -thick / 2, size, 7);
+  ctx.strokeStyle = 'rgba(12,14,17,0.8)';
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.roundRect(-h, -thick / 2, size, thick, 5);
+  ctx.stroke();
+
+  // Locking bars running the height of the leaf.
+  ctx.strokeStyle = 'rgba(20,23,26,0.55)';
+  ctx.lineWidth = 6;
+  ctx.beginPath();
+  for (const x of [-h + size * 0.3, -h + size * 0.62]) {
+    ctx.moveTo(x, -thick / 2 + 5);
+    ctx.lineTo(x, thick / 2 - 5);
+  }
+  ctx.stroke();
+
+  // Hinge knuckle at the pivot end.
+  ctx.fillStyle = '#2b3137';
+  ctx.beginPath();
+  ctx.roundRect(-h, -thick * 0.62, 16, thick * 1.24, 4);
+  ctx.fill();
+
+  // Handle at the free end.
+  ctx.fillStyle = '#8d9299';
+  ctx.fillRect(h - 26, -thick * 0.2, 12, thick * 0.4);
   ctx.restore();
 }

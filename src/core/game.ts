@@ -7,6 +7,7 @@ import { Renderer } from '../render/renderer';
 import { BOT_RADIUS, BotPool } from '../sim/bots';
 import { buildLevelGeometry, SPAWN, type LevelGeometry } from '../sim/level';
 import { NavGrid } from '../sim/navGrid';
+import { TrailerFleet } from '../sim/trailers';
 
 const EDGE_PAN_MARGIN = 58;
 const PAN_SPEED = 1750;
@@ -33,6 +34,7 @@ export class Game {
   readonly nav: NavGrid;
   readonly bots = new BotPool(4096);
   readonly entities: EntityRenderer;
+  readonly trailers: TrailerFleet;
   readonly stats: Stats = {
     fps: 60, frameMs: 0, simMs: 0, drawMs: 0, sprites: 0, bots: 0, selected: 0,
   };
@@ -59,6 +61,7 @@ export class Game {
     this.container = container;
     // The bake needs the bays before anything else, so the level is built first.
     this.level = buildLevelGeometry(seed);
+    this.trailers = new TrailerFleet(this.level.bays, seed);
     this.renderer = new Renderer(container, seed, this.level.bays);
     this.camera = new Camera(SPAWN.x, SPAWN.y, 0.30);
     this.input = new Input(this.renderer.canvas);
@@ -182,6 +185,7 @@ export class Game {
       lighting,
       settings: this.settings,
       level: this.level,
+      trailers: this.trailers,
       time,
       drawEntities: (batch, bounds) => {
         this.entities.drawBodies(batch, bounds);
@@ -203,6 +207,13 @@ export class Game {
     this.clock.paused = this.settings.timePaused;
     this.clock.dayLengthSeconds = this.settings.dayLengthSeconds;
     this.clock.advance(dt * this.settings.simSpeed);
+
+    // Trailers coming and going change which bays can be driven into. Only the
+    // bay strip is re-rasterised: a full rebuild here cost a four-frame hitch
+    // every few seconds.
+    if (this.trailers.update(dt * this.settings.simSpeed)) {
+      this.nav.rebuildBayCorridors(this.level.bays);
+    }
 
     this.updateCamera(dt);
     this.updateSelection();
@@ -298,13 +309,15 @@ export class Game {
   private takeProp = (propIndex: number): void => {
     const prop = this.level.props[propIndex];
     if (!prop) return;
+    const { x, y, radius } = prop;
     this.level.props.splice(propIndex, 1);
     // Indices shift, so anything still targeting a later crate must follow.
     for (let i = 0; i < this.bots.count; i++) {
       if (this.bots.targetProp[i] > propIndex) this.bots.targetProp[i]--;
     }
     this.bots.setProps(this.level.props);
-    this.nav.rebuild(this.level.columns, this.level.props);
+    // Only the ground the crate was standing on has changed.
+    this.nav.clearAround(x, y, radius, this.level.props);
   };
 
   /** Nearest crate to a world point, within a generous grab radius. */

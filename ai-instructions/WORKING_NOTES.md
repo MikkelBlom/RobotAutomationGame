@@ -39,6 +39,19 @@ not a whole fleet.
 string-pulled against line-of-sight. Robots are never snapped to it. This
 matters — Mikkel pushed back hard on anything that reads as a grid.
 
+## Never re-rasterise the whole nav grid during play
+
+A full `NavGrid.rebuild` is ~70 ms over the 32,000 cells — a four-frame hitch.
+It was being called on every crate pickup and every trailer docking, the latter
+firing about every eight seconds. Use the targeted paths instead:
+
+- `rebuildBayCorridors(bays)` — only the trailer apron and the first rows of
+  slab inside the north wall. 0.18 ms.
+- `clearAround(x, y, radius, props)` — only the cells a lifted crate covered.
+  0.013 ms.
+
+`rebuild` itself is for load time and wholesale level changes only.
+
 ## WORLD is not the building
 
 `WORLD` is the camera's limit and includes the dark apron on every side.

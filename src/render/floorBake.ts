@@ -3,10 +3,8 @@ import { pointInPolygon } from '../sim/polygon';
 import {
   BAY_APPROACH_DEPTH,
   SHELL,
-  TRAILER_DEPTH,
   DOCK_OPENING,
   FLOOR,
-  TRAILER_WIDTH,
   type DockBay,
   HAZARD_BAND,
   WALL_THICKNESS,
@@ -200,10 +198,9 @@ function paintLoadingBays(ctx: CanvasRenderingContext2D, rng: Rng, bays: DockBay
     const x0 = bay.x - half;
     const x1 = bay.x + half;
 
-    if (bay.occupied) paintTrailer(ctx, rng, bay, northY);
-
-    // Rubber dock seal lining the opening. Empty bays are simply black.
-    ctx.fillStyle = bay.occupied ? '#101418' : '#04060a';
+    // Rubber dock seal lining the opening. Trailers are drawn live on top of
+    // this now, since they arrive and leave.
+    ctx.fillStyle = '#05070b';
     ctx.fillRect(x0, northY, bay.width, t);
     ctx.fillStyle = '#0a0d11';
     ctx.fillRect(x0, northY, 26, t);
@@ -248,7 +245,7 @@ function paintLoadingBays(ctx: CanvasRenderingContext2D, rng: Rng, bays: DockBay
     ctx.restore();
 
     // Painted approach lane: two edge lines and a bay number block.
-    ctx.strokeStyle = `rgba(184,147,46,${bay.occupied ? 0.5 : 0.34})`;
+    ctx.strokeStyle = 'rgba(184,147,46,0.42)';
     ctx.lineWidth = 16;
     ctx.setLineDash([170, 110]);
     ctx.beginPath();
@@ -272,78 +269,6 @@ function paintLoadingBays(ctx: CanvasRenderingContext2D, rng: Rng, bays: DockBay
     }
     ctx.globalAlpha = 1;
   }
-}
-
-/** The inside of a trailer backed onto a bay, seen through the open doors. */
-function paintTrailer(
-  ctx: CanvasRenderingContext2D,
-  rng: Rng,
-  bay: DockBay,
-  northY: number,
-): void {
-  const halfW = TRAILER_WIDTH / 2;
-  const x0 = bay.x - halfW;
-  // Runs from the wall face out into the apron; only the rear of it is on screen.
-  const y1 = northY;
-  // Ends within the apron so the whole trailer is on screen with dark behind
-  // it. Running it to the world edge meant it was always cut off.
-  const depth = TRAILER_DEPTH;
-  const y0 = y1 - depth;
-
-  // Body shell, slightly wider than the interior.
-  ctx.fillStyle = '#2a2f34';
-  ctx.fillRect(x0 - 22, y0 - 26, TRAILER_WIDTH + 44, depth + 26);
-
-  // Interior floor: worn hardwood decking running lengthwise.
-  ctx.fillStyle = PALETTE.trailerFloor;
-  ctx.fillRect(x0, y0, TRAILER_WIDTH, depth);
-  ctx.strokeStyle = 'rgba(30,24,16,0.55)';
-  ctx.lineWidth = 5;
-  ctx.beginPath();
-  for (let x = x0 + 26; x < x0 + TRAILER_WIDTH; x += 26) {
-    ctx.moveTo(x, y0);
-    ctx.lineTo(x, y1);
-  }
-  ctx.stroke();
-
-  // Ribbed side walls.
-  ctx.fillStyle = '#3d444a';
-  ctx.fillRect(x0 - 16, y0, 16, depth);
-  ctx.fillRect(x0 + TRAILER_WIDTH, y0, 16, depth);
-  ctx.strokeStyle = 'rgba(0,0,0,0.4)';
-  ctx.lineWidth = 4;
-  ctx.beginPath();
-  for (let y = y0; y < y1; y += 30) {
-    ctx.moveTo(x0 - 16, y);
-    ctx.lineTo(x0, y);
-    ctx.moveTo(x0 + TRAILER_WIDTH, y);
-    ctx.lineTo(x0 + TRAILER_WIDTH + 16, y);
-  }
-  ctx.stroke();
-
-  // Load restraint rails.
-  ctx.fillStyle = 'rgba(190,196,200,0.22)';
-  ctx.fillRect(x0 + 6, y0, 7, depth);
-  ctx.fillRect(x0 + TRAILER_WIDTH - 13, y0, 7, depth);
-
-  // Grime, and dark at the far end where the light does not reach.
-  for (let i = 0; i < 34; i++) {
-    ctx.globalAlpha = rng.range(0.05, 0.2);
-    ctx.fillStyle = rng.chance(0.5) ? '#241d13' : '#7a4520';
-    ctx.beginPath();
-    ctx.ellipse(
-      rng.range(x0, x0 + TRAILER_WIDTH), rng.range(y0, y1),
-      rng.range(14, 60), rng.range(9, 38), rng.range(0, TAU), 0, TAU,
-    );
-    ctx.fill();
-  }
-  ctx.globalAlpha = 1;
-
-  const fade = ctx.createLinearGradient(0, y0, 0, y0 + depth * 0.75);
-  fade.addColorStop(0, 'rgba(4,6,9,0.92)');
-  fade.addColorStop(1, 'rgba(4,6,9,0)');
-  ctx.fillStyle = fade;
-  ctx.fillRect(x0 - 22, y0 - 26, TRAILER_WIDTH + 44, depth);
 }
 
 function paintWallRun(

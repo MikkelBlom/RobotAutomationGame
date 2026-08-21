@@ -35,6 +35,9 @@ const ARM_WIDTH = 200;
 /** How far out from the centreline the arms sit, stowed and fully spread. */
 const ARM_SPREAD_IN = 0.30;
 const ARM_SPREAD_OUT = 0.62;
+/** How much a crate grows as it comes off the floor, selling the height. */
+const LIFT_RISE = 0.16;
+
 /** A carried crate is a Euro pallet's footprint, drawn at real size. */
 const CARRIED_FOOTPRINT = 120;
 const CARRIED_SIZE = CARRIED_FOOTPRINT / CRATE_ART_FILL;
@@ -90,6 +93,20 @@ export class EntityRenderer {
         REGIONS.hardShadow, b.x[i], b.y[i], b.angle[i],
         SPRITE_W * 0.86, SPRITE_H * 0.90, 0, 0, 0, 0.5,
       );
+
+      // A crate being lifted leaves its shadow behind on the floor, shrinking
+      // and fading as it rises.
+      const t = b.liftT[i];
+      if (b.carrying[i] >= 0 && t < 1) {
+        const e = t * t * (3 - 2 * t);
+        const shrink = 1 - e * 0.45;
+        batch.pushRegion(
+          REGIONS.hardShadow,
+          b.liftFromX[i], b.liftFromY[i], b.angle[i],
+          CARRIED_SIZE * shrink, CARRIED_SIZE * shrink,
+          0, 0, 0, 0.55 * (1 - e * 0.7),
+        );
+      }
     }
   }
 
@@ -165,11 +182,27 @@ export class EntityRenderer {
           b.carrying[i] === 0 ? REGIONS.crateTimber
           : b.carrying[i] === 1 ? REGIONS.crateSteel
           : REGIONS.palletStack;
-        // Sat on the deck, which is towards the back of the machine.
-        const dx = b.x[i] - cos * (BOT_LENGTH * 0.17);
-        const dy = b.y[i] - sin * (BOT_LENGTH * 0.17);
-        const size = CARRIED_SIZE;
-        batch.pushRegion(region, dx, dy, b.angle[i], size, size, 1, 1, 1, 1);
+
+        // Where it ends up: on the deck, towards the back of the machine.
+        const deckX = b.x[i] - cos * (BOT_LENGTH * 0.17);
+        const deckY = b.y[i] - sin * (BOT_LENGTH * 0.17);
+
+        const t = b.liftT[i];
+        if (t >= 1) {
+          batch.pushRegion(
+            region, deckX, deckY, b.angle[i], CARRIED_SIZE, CARRIED_SIZE, 1, 1, 1, 1,
+          );
+        } else {
+          // Travelling from the floor onto the deck. Ease it, and grow it a
+          // little on the way: seen from above, rising towards the camera is
+          // the only cue that something has left the ground.
+          const e = t * t * (3 - 2 * t);
+          const cx = b.liftFromX[i] + (deckX - b.liftFromX[i]) * e;
+          const cy = b.liftFromY[i] + (deckY - b.liftFromY[i]) * e;
+          const rise = 1 + LIFT_RISE * Math.sin(e * Math.PI * 0.5);
+          const size = CARRIED_SIZE * rise;
+          batch.pushRegion(region, cx, cy, b.angle[i], size, size, 1, 1, 1, 1);
+        }
       }
     }
   }

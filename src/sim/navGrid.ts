@@ -51,6 +51,8 @@ export class NavGrid {
   private readonly inOpen: Uint8Array;
   private readonly botRadius: number;
   private bays: DockBay[] = [];
+  private columns: Column[] = [];
+  private props: Prop[] = [];
   private searchId = 0;
   private heapSize = 0;
 
@@ -71,10 +73,58 @@ export class NavGrid {
     this.rasterise(columns, props, botRadius);
   }
 
-  /** Re-rasterises after the world's obstacles change, e.g. a crate lifted. */
+  /**
+   * Full re-rasterise. ~70 ms over the whole grid, so this is for load time and
+   * wholesale level changes only — never for something that happens during
+   * play. Use the targeted variants below for that.
+   */
   rebuild(columns: Column[], props: Prop[], bays?: DockBay[]): void {
     if (bays) this.bays = bays;
+    this.columns = columns;
+    this.props = props;
     this.rasterise(columns, props, this.botRadius);
+  }
+
+  /**
+   * Re-rasterises only the strip the loading bays occupy: the trailer apron and
+   * the first rows of slab inside the north wall.
+   *
+   * A trailer docking or leaving cannot affect anything else, and doing a full
+   * rebuild for it cost a four-frame hitch every few seconds.
+   */
+  rebuildBayCorridors(bays: DockBay[]): void {
+    this.bays = bays;
+    const edge = this.botRadius + 30;
+    const lastRow = Math.min(
+      this.rows - 1,
+      Math.floor((FLOOR.y + edge - NAV.y0) / CELL) + 1,
+    );
+    for (let cy = 0; cy <= lastRow; cy++) {
+      const wy = NAV.y0 + (cy + 0.5) * CELL;
+      for (let cx = 0; cx < this.cols; cx++) {
+        const wx = NAV.x0 + (cx + 0.5) * CELL;
+        this.blocked[cy * this.cols + cx] = this.testCell(wx, wy, edge) ? 1 : 0;
+      }
+    }
+  }
+
+  /**
+   * Re-opens the ground a lifted crate was standing on. Only the cells it
+   * actually covered are retested, which is a handful rather than 32,000.
+   */
+  clearAround(x: number, y: number, radius: number, props: Prop[]): void {
+    this.props = props;
+    const edge = this.botRadius + 30;
+    const reach = radius + this.botRadius + CELL;
+    const c0 = this.cellOf(x - reach, y - reach);
+    const c1 = this.cellOf(x + reach, y + reach);
+    for (let cy = Math.max(0, c0.cy); cy <= Math.min(this.rows - 1, c1.cy); cy++) {
+      for (let cx = Math.max(0, c0.cx); cx <= Math.min(this.cols - 1, c1.cx); cx++) {
+        const wx = NAV.x0 + (cx + 0.5) * CELL;
+        const wy = NAV.y0 + (cy + 0.5) * CELL;
+        this.blocked[cy * this.cols + cx] = this.testCell(wx, wy, edge) ? 1 : 0;
+      }
+    }
   }
 
   /**
@@ -99,51 +149,48 @@ export class NavGrid {
     return false;
   }
 
+  /** Whether a single world point is blocked. Shared by every rasterise path. */
+  private testCell(wx: number, wy: number, edge: number): boolean {
+    const botRadius = this.botRadius;
+
+    if (wy < FLOOR.y) {
+      // North of the slab: only a bay corridor is drivable, everything else
+      // out here is wall or the dark apron.
+      return !this.inBayCorridor(wx, wy, botRadius);
+    }
+    if (
+      wx < FLOOR.x + edge ||
+      wx > FLOOR.x + FLOOR.w - edge ||
+      wy > FLOOR.y + FLOOR.h - edge ||
+      // The north edge margin must not seal the bay mouths.
+      (wy < FLOOR.y + edge && !this.inBayCorridor(wx, FLOOR.y - 1, botRadius))
+    ) {
+      return true;
+    }
+    if (inWater(wx, wy, WATER_CLEARANCE + botRadius)) return true;
+
+    for (const col of this.columns) {
+      const half = col.size * 0.95 + botRadius;
+      if (Math.abs(wx - col.x) < half && Math.abs(wy - col.y) < half) return true;
+    }
+    for (const prop of this.props) {
+      const reach = prop.radius + botRadius;
+      const dx = wx - prop.x;
+      const dy = wy - prop.y;
+      if (dx * dx + dy * dy < reach * reach) return true;
+    }
+    return false;
+  }
+
   private rasterise(columns: Column[], props: Prop[], botRadius: number): void {
+    this.columns = columns;
+    this.props = props;
     const edge = botRadius + 30;
     for (let cy = 0; cy < this.rows; cy++) {
       for (let cx = 0; cx < this.cols; cx++) {
         const wx = NAV.x0 + (cx + 0.5) * CELL;
         const wy = NAV.y0 + (cy + 0.5) * CELL;
-        let blocked = false;
-
-        const inBay = this.inBayCorridor(wx, wy, botRadius);
-
-        if (wy < FLOOR.y) {
-          // North of the slab: only a bay corridor is drivable, everything
-          // else out here is wall or the dark apron.
-          blocked = !inBay;
-        } else if (
-          wx < FLOOR.x + edge ||
-          wx > FLOOR.x + FLOOR.w - edge ||
-          wy > FLOOR.y + FLOOR.h - edge ||
-          // The north edge margin must not seal the bay mouths.
-          (wy < FLOOR.y + edge && !this.inBayCorridor(wx, FLOOR.y - 1, botRadius))
-        ) {
-          blocked = true;
-        } else if (inWater(wx, wy, WATER_CLEARANCE + botRadius)) {
-          blocked = true;
-        } else {
-          for (const col of columns) {
-            const half = col.size * 0.95 + botRadius;
-            if (Math.abs(wx - col.x) < half && Math.abs(wy - col.y) < half) {
-              blocked = true;
-              break;
-            }
-          }
-          if (!blocked) {
-            for (const prop of props) {
-              const reach = prop.radius + botRadius;
-              const dx = wx - prop.x;
-              const dy = wy - prop.y;
-              if (dx * dx + dy * dy < reach * reach) {
-                blocked = true;
-                break;
-              }
-            }
-          }
-        }
-        this.blocked[cy * this.cols + cx] = blocked ? 1 : 0;
+        this.blocked[cy * this.cols + cx] = this.testCell(wx, wy, edge) ? 1 : 0;
       }
     }
   }
