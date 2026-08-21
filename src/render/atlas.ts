@@ -95,6 +95,15 @@ const CELLS = {
   /** The beacon's lens, for the emissive pass. */
   warnGlow: [0, 1024, 256, 256],
 
+  /** Charging cabinet, live. Connector faces +x. */
+  chargeDock: [256, 1024, 256, 256],
+  /** The same cabinet still sealed from the factory. */
+  chargeDockSealed: [512, 1024, 256, 256],
+  /** Painted floor pad a robot backs onto. */
+  chargePad: [768, 1024, 256, 256],
+  /** Contact glow for a live point. */
+  chargeGlow: [1024, 1024, 256, 256],
+
   /** Digits and the few marks the quota board needs, 16 across. */
   glyphs: [0, 1280, 2048, 128],
   /** Quota board housing: bezel, dividers, mounting. Unlit. */
@@ -194,6 +203,10 @@ export function buildAtlas(seed: number): HTMLCanvasElement {
   drawTrailerDoor(ctx);
   drawCrateVariants(ctx, seed);
   drawCrateOutline(ctx);
+  drawChargeDock(ctx, false);
+  drawChargeDock(ctx, true);
+  drawChargePad(ctx, makeRng(seed ^ 0x2f19));
+  drawChargeGlow(ctx);
   drawGlyphs(ctx);
   drawQuotaBoard(ctx);
   drawDockPlate(ctx, makeRng(seed ^ 0x71c3));
@@ -1374,5 +1387,154 @@ function drawQuotaBoard(ctx: CanvasRenderingContext2D): void {
   label('SHIPPED / QUOTA', BOARD_FIELDS.shipped.x);
   label('REVENUE', BOARD_FIELDS.revenue.x);
   label('AVG PER CRATE', BOARD_FIELDS.average.x);
+  ctx.restore();
+}
+
+/**
+ * Charging cabinet, seen from above with its connector towards +x.
+ *
+ * The sealed variant is the same box with a bolted transit cover over the head
+ * and a lockout tag on it — the difference has to be visible at a glance,
+ * because a whole wall of them is the game saying "not yet" ten times over.
+ */
+function drawChargeDock(ctx: CanvasRenderingContext2D, sealed: boolean): void {
+  const { size } = cell(ctx, sealed ? 'chargeDockSealed' : 'chargeDock');
+  const hw = size * 0.30;
+  const hh = size * 0.34;
+
+  ctx.fillStyle = '#171a1d';
+  ctx.beginPath();
+  ctx.roundRect(-hw - 6, -hh - 6, hw * 2 + 12, hh * 2 + 12, 7);
+  ctx.fill();
+  ctx.fillStyle = sealed ? '#3b4046' : '#4c545c';
+  ctx.beginPath();
+  ctx.roundRect(-hw, -hh, hw * 2, hh * 2, 5);
+  ctx.fill();
+
+  // Cooling fins down the back half.
+  ctx.strokeStyle = 'rgba(15,17,19,0.7)';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  for (let y = -hh + 12; y < hh - 8; y += 13) {
+    ctx.moveTo(-hw + 7, y);
+    ctx.lineTo(-hw * 0.1, y);
+  }
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(255,255,255,0.07)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  for (let y = -hh + 15; y < hh - 8; y += 13) {
+    ctx.moveTo(-hw + 7, y);
+    ctx.lineTo(-hw * 0.1, y);
+  }
+  ctx.stroke();
+
+  // Connector head, on the hall side.
+  ctx.fillStyle = '#23272c';
+  ctx.beginPath();
+  ctx.roundRect(hw * 0.16, -hh * 0.46, hw * 1.05, hh * 0.92, 4);
+  ctx.fill();
+  ctx.fillStyle = sealed ? '#2c3035' : '#8d6a2a';
+  for (const sy of [-1, 1]) {
+    ctx.beginPath();
+    ctx.roundRect(hw * 0.62, sy * hh * 0.30 - 6, hw * 0.5, 12, 3);
+    ctx.fill();
+  }
+
+  if (sealed) {
+    // Transit cover: a plate bolted straight over the head.
+    ctx.fillStyle = '#5a6068';
+    ctx.beginPath();
+    ctx.roundRect(hw * 0.10, -hh * 0.56, hw * 1.2, hh * 1.12, 4);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(16,18,20,0.75)';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    ctx.fillStyle = '#2a2e33';
+    for (const sy of [-1, 1]) {
+      ctx.beginPath();
+      ctx.arc(hw * 1.10, sy * hh * 0.38, 5, 0, TAU);
+      ctx.fill();
+    }
+    // Lockout tag, hanging off the cover.
+    ctx.fillStyle = '#b8352c';
+    ctx.beginPath();
+    ctx.roundRect(hw * 0.34, hh * 0.42, hw * 0.62, hh * 0.44, 3);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(hw * 0.42, hh * 0.56, hw * 0.46, 4);
+    ctx.fillRect(hw * 0.42, hh * 0.68, hw * 0.30, 4);
+  } else {
+    // Status lens, dark here — the emissive pass lights it.
+    ctx.fillStyle = '#1d3a2c';
+    ctx.beginPath();
+    ctx.arc(-hw * 0.55, -hh * 0.66, 9, 0, TAU);
+    ctx.fill();
+  }
+
+  ctx.strokeStyle = 'rgba(10,12,14,0.65)';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.roundRect(-hw, -hh, hw * 2, hh * 2, 5);
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** Painted parking pad. Worn where a robot's tracks would sit. */
+function drawChargePad(ctx: CanvasRenderingContext2D, rng: ReturnType<typeof makeRng>): void {
+  const { size } = cell(ctx, 'chargePad');
+  const hw = size * 0.46;
+  const hh = size * 0.38;
+
+  ctx.strokeStyle = '#c8b04a';
+  ctx.lineWidth = 9;
+  ctx.setLineDash([]);
+  ctx.beginPath();
+  // Closed against the wall at +x, open to the hall at -x: it is a bay to
+  // reverse into, not a box to sit in.
+  ctx.moveTo(-hw, -hh);
+  ctx.lineTo(hw, -hh);
+  ctx.lineTo(hw, hh);
+  ctx.lineTo(-hw, hh);
+  ctx.stroke();
+
+  // Entry ticks, so the open side still reads as an edge.
+  ctx.lineWidth = 8;
+  ctx.beginPath();
+  for (const sy of [-1, 1]) {
+    ctx.moveTo(-hw, sy * hh);
+    ctx.lineTo(-hw + size * 0.13, sy * hh);
+  }
+  ctx.stroke();
+
+  // Track wear, running the way a robot backs in.
+  ctx.fillStyle = 'rgba(28,30,33,0.30)';
+  for (const sy of [-1, 1]) {
+    ctx.fillRect(-hw, sy * hh * 0.48 - 13, hw * 1.75, 26);
+  }
+
+  for (let i = 0; i < 22; i++) {
+    ctx.globalAlpha = rng.range(0.05, 0.20);
+    ctx.fillStyle = rng.chance(0.6) ? '#1a1c1f' : '#6d4a24';
+    ctx.beginPath();
+    ctx.ellipse(rng.range(-hw, hw), rng.range(-hh, hh),
+      rng.range(4, 15), rng.range(3, 11), rng.range(0, TAU), 0, TAU);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+/** Soft green contact glow for a commissioned point. */
+function drawChargeGlow(ctx: CanvasRenderingContext2D): void {
+  const { size } = cell(ctx, 'chargeGlow');
+  const r = size * 0.46;
+  const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, r);
+  grad.addColorStop(0, 'rgba(220,255,240,0.95)');
+  grad.addColorStop(0.25, 'rgba(120,255,190,0.55)');
+  grad.addColorStop(0.6, 'rgba(40,220,150,0.18)');
+  grad.addColorStop(1, 'rgba(20,180,120,0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(-r, -r, r * 2, r * 2);
   ctx.restore();
 }

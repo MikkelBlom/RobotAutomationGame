@@ -316,3 +316,37 @@ and the renderer so the numbers land inside the panels drawn for them.
 little is aboard, so merely driving across it on the way somewhere else would
 dispatch a half-loaded truck. `PLATE_DWELL` is 1.3s with the beacon flashing
 throughout: the hold is visible while it happens rather than a hidden timer.
+
+## Shipping and the east wall (2026-08-21, later still)
+
+**Loaded is not shipped.** Mikkel's rule: a crate counts, and its money arrives,
+only when the truck pulls out — `TrailerFleet.onDeparted` fires once at the
+Closing→Leaving transition and hands the whole cargo array to `Ledger.ship()`.
+The board therefore sits at zero while a trailer fills, which is correct: the
+trailer visibly filling IS the feedback, and a load still on the bay can still be
+the one that gets left behind.
+
+**The pace metric is not the shipping metric.** "Average per crate" is measured
+on crates going ONTO a trailer (`Ledger.load`), not off in one. Tying it to
+shipping would freeze it for a whole load, lurch when the truck goes, and then
+degrade for hours while the trailer is away — none of which says anything about
+how the machines are working. Shipped and revenue are the batched figures; the
+average is the live one.
+
+**A quota has to be reachable from what is in the building.** The daily quota was
+24 against 23 liftable crates in the whole hall, so the board could only ever be
+red. It is 12 now — one trailer — and the crate clusters carry a little more to
+make up for the floor the east service lane took.
+
+**The charging run is built locked.** Ten points on the east wall, numbered from
+the south corner north, all `unlocked: false`. Sealed points draw a different
+cabinet (transit cover, lockout tag) and their bay paint at 42% — the difference
+has to be visible at a glance, because a whole wall of them is the game saying
+"not yet" ten times over without a word of text. Unlocking is a flag; the live
+cabinet, its contact glow and its light pool are already wired.
+
+**Sprites that face a wall need a fixed authoring direction.** The charge cabinet
+is authored with its connector towards +x and drawn rotated by π on the east
+wall. Authoring it already-facing-west would have worked today and been wrong the
+first time a point goes on another wall. Same reason the floor pad is drawn
+closed at +x, open at -x: the bay is something to reverse into.

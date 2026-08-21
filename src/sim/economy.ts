@@ -16,28 +16,62 @@ export function crateValue(material: CrateMaterialValue, shape: CrateShapeValue)
   return Math.round(byMaterial[material] * bySize[shape]);
 }
 
-/** How many crates a shift is expected to move. */
-const DAILY_QUOTA = 24;
+/**
+ * How many crates a shift is expected to move.
+ *
+ * One trailer's worth. It has to be a figure the hall can actually supply —
+ * with a quota above the number of liftable crates in the building, the board
+ * is just permanently red.
+ */
+const DAILY_QUOTA = 12;
 
 export class Ledger {
   shippedToday = 0;
   quota = DAILY_QUOTA;
   /** Money banked across the whole run, not just today. */
   revenue = 0;
-  /** Mean seconds per crate today. Zero until the second one lands. */
+  /**
+   * Mean seconds per crate handled today.
+   *
+   * Measured on crates going ONTO a trailer, not off in one. Shipping happens
+   * in batches of up to twelve, so tying the pace to it would leave the figure
+   * frozen for a whole load and then lurch — and it would degrade while a
+   * trailer is away, which says nothing about how the machines are working.
+   */
   avgSeconds = 0;
 
+  /** Crates put aboard today, shipped or not. Drives the average only. */
+  private loadedToday = 0;
   private shiftStart = 0;
   private day = 0;
 
-  /** Records one crate loaded, at `now` seconds of simulated time. */
-  record(material: CrateMaterialValue, shape: CrateShapeValue, now: number): void {
-    this.shippedToday++;
-    this.revenue += crateValue(material, shape);
-    // Mean over the whole shift so far, not since the last crate: a single fast
-    // turnaround should not make a slow shift look quick.
+  /**
+   * Records a trailer leaving with a load aboard, at `now` simulated seconds.
+   *
+   * Nothing counts until the truck pulls out. A crate sitting in a trailer that
+   * is still on the bay has not been shipped and has not been paid for — it can
+   * still be the thing that gets left behind when the doors shut.
+   */
+  ship(
+    load: ReadonlyArray<{ material: CrateMaterialValue; shape: CrateShapeValue } | null>,
+  ): void {
+    for (const crate of load) {
+      if (!crate) continue;
+      this.shippedToday++;
+      this.revenue += crateValue(crate.material, crate.shape);
+    }
+  }
+
+  /**
+   * Records one crate set down in a trailer, at `now` simulated seconds.
+   *
+   * Mean over the whole shift so far, not since the last crate: one fast
+   * turnaround should not make a slow shift look quick.
+   */
+  load(now: number): void {
+    this.loadedToday++;
     const elapsed = Math.max(0, now - this.shiftStart);
-    this.avgSeconds = this.shippedToday > 0 ? elapsed / this.shippedToday : 0;
+    this.avgSeconds = elapsed / this.loadedToday;
   }
 
   /**
@@ -51,6 +85,7 @@ export class Ledger {
     if (day === this.day) return;
     this.day = day;
     this.shippedToday = 0;
+    this.loadedToday = 0;
     this.avgSeconds = 0;
     this.shiftStart = now;
   }

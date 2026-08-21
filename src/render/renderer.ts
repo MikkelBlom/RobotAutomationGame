@@ -225,6 +225,7 @@ export class Renderer {
     applyBlend(gl, BlendMode.Normal);
     this.entityBatch.begin();
     pass?.collectColumns(this.entityBatch, bounds, ctx.settings);
+    pass?.collectChargers(this.entityBatch, bounds);
     pass?.collectProps(this.entityBatch, bounds, ctx.settings);
     this.board.collect(this.entityBatch, bounds);
     if (ctx.trailers) {
@@ -251,6 +252,7 @@ export class Renderer {
     this.lightBatch.begin();
     pass?.collectDaylight(this.lightBatch, ctx.lighting, bounds, ctx.settings);
     pass?.collectLamps(this.lightBatch, ctx.lighting, bounds, ctx.time, ctx.settings);
+    pass?.collectChargerLights(this.lightBatch, bounds, ctx.time, ctx.settings);
     if (ctx.trailers) {
       pass?.collectTrailerLights(this.lightBatch, ctx.trailers, bounds, ctx.settings);
       pass?.collectPlateLights(this.lightBatch, ctx.trailers, bounds, ctx.time, ctx.settings);
@@ -291,6 +293,7 @@ export class Renderer {
     applyBlend(gl, BlendMode.Additive);
     this.glowBatch.begin();
     if (ctx.ledger) this.board.collectGlow(this.glowBatch, bounds, ctx.ledger, ctx.time);
+    pass?.collectChargerGlow(this.glowBatch, bounds, ctx.time);
     if (ctx.trailers) pass?.collectPlateGlow(this.glowBatch, ctx.trailers, bounds, ctx.time);
     ctx.drawGlow?.(this.glowBatch, bounds);
     sprites += this.glowBatch.length;

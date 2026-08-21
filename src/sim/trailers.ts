@@ -71,6 +71,11 @@ export interface Trailer {
 
 export class TrailerFleet {
   readonly trailers: Trailer[] = [];
+  /**
+   * Called once as a trailer pulls out, with what it is taking with it. This is
+   * the moment a load actually counts as shipped.
+   */
+  onDeparted: ((load: Trailer['cargo']) => void) | null = null;
   private readonly rng: Rng;
 
   constructor(bays: DockBay[], seed: number) {
@@ -182,7 +187,11 @@ export class TrailerFleet {
             break;
           }
           t.doors = Math.max(0, 1 - t.elapsed / CLOSE_TIME);
-          if (t.elapsed >= CLOSE_TIME) this.enter(t, TrailerState.Leaving);
+          if (t.elapsed >= CLOSE_TIME) {
+            // Doors shut and rolling: the load has left the building.
+            this.onDeparted?.(t.cargo);
+            this.enter(t, TrailerState.Leaving);
+          }
           break;
 
         case TrailerState.Leaving: {

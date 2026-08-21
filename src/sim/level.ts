@@ -214,6 +214,51 @@ export function buildDockPlates(bays: DockBay[]): DockPlate[] {
   }));
 }
 
+/**
+ * A charging point on the east wall.
+ *
+ * A robot backs onto the pad and the cabinet behind it plugs in, which is why
+ * the whole run faces west into a service lane kept clear of cargo. None are
+ * commissioned yet — they are built sealed, and unlocking one is a flag.
+ */
+export interface ChargePad {
+  /** Centre of the floor pad the robot parks on. */
+  x: number;
+  y: number;
+  /** Where the cabinet sits, inside the wall band. */
+  dockX: number;
+  /** Position in the run, counted from the south end. */
+  index: number;
+  unlocked: boolean;
+}
+
+/** Ten points, spaced so a robot can turn into one without clipping its neighbour. */
+export const CHARGE_COUNT = 10;
+const CHARGE_PITCH = 620;
+/** Floor pad footprint. Sized off the robot, not the other way round. */
+export const CHARGE_PAD_W = 360;
+export const CHARGE_PAD_H = 300;
+/** Service lane along the east wall, kept clear of abandoned cargo. */
+export const CHARGE_LANE = 950;
+
+export function buildChargePads(): ChargePad[] {
+  const pads: ChargePad[] = [];
+  const wall = FLOOR.x + FLOOR.w;
+  // Numbered from the south end, running north: the first one to be
+  // commissioned should be the one nearest the corner, not the middle of a row.
+  const first = FLOOR.y + FLOOR.h - 520;
+  for (let i = 0; i < CHARGE_COUNT; i++) {
+    pads.push({
+      x: wall - CHARGE_PAD_W / 2 - 20,
+      y: first - i * CHARGE_PITCH,
+      dockX: wall + WALL_THICKNESS * 0.42,
+      index: i,
+      unlocked: false,
+    });
+  }
+  return pads;
+}
+
 export interface Column {
   x: number;
   y: number;
@@ -263,6 +308,7 @@ export interface Prop {
 
 export interface LevelGeometry {
   plates: DockPlate[];
+  chargers: ChargePad[];
   columns: Column[];
   lamps: Lamp[];
   skylights: Skylight[];
@@ -359,7 +405,8 @@ export function buildLevelGeometry(seed: number): LevelGeometry {
 
   const props = buildProps(rng, columns, bays);
   const plates = buildDockPlates(bays);
-  return { columns, lamps, skylights, props, bays, plates };
+  const chargers = buildChargePads();
+  return { columns, lamps, skylights, props, bays, plates, chargers };
 }
 
 /**
@@ -381,7 +428,9 @@ function buildProps(
   ];
 
   const clearOf = (x: number, y: number, r: number): boolean => {
-    if (x < FLOOR.x + 500 || x > FLOOR.x + FLOOR.w - 500) return false;
+    if (x < FLOOR.x + 500) return false;
+    // The east wall carries the charging run and its approach lane.
+    if (x > FLOOR.x + FLOOR.w - CHARGE_LANE) return false;
     if (y < FLOOR.y + 500 || y > FLOOR.y + FLOOR.h - 500) return false;
     if (inWater(x, y, 500)) return false;
     if (y < BAY_APPROACH_DEPTH + 300 && bays.some((b) => Math.abs(x - b.x) < 800)) return false;
@@ -400,8 +449,9 @@ function buildProps(
   for (const [cx, cy, spread] of clusters) {
     // A trailer takes twelve. The hall has to hold at least a couple of loads
     // of the one thing the starting machine can lift, or the truck never fills
-    // and never leaves.
-    const n = rng.int(5, 8);
+    // and never leaves — and the east service lane took a slice out of the
+    // usable floor, so the clusters carry a little more than they used to.
+    const n = rng.int(6, 9);
     for (let k = 0; k < n; k++) {
       for (let attempt = 0; attempt < 40; attempt++) {
         const x = cx + rng.range(-spread, spread);

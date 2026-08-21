@@ -1,7 +1,8 @@
 import type { LightingState } from '../core/dayCycle';
 import type { Settings } from '../core/settings';
 import {
-  FLOOR, SHELL, TRAILER_DEPTH, TRAILER_WIDTH, WALL_THICKNESS, type LevelGeometry,
+  CHARGE_PAD_H, CHARGE_PAD_W, FLOOR, SHELL, TRAILER_DEPTH, TRAILER_WIDTH,
+  WALL_THICKNESS, type LevelGeometry,
 } from '../sim/level';
 import { TrailerFleet } from '../sim/trailers';
 import { REGIONS } from './atlas';
@@ -66,6 +67,8 @@ export function pushCastShadow(
  */
 /** Cable thickness on the floor. Thin enough to read as conduit, not a stripe. */
 const PLATE_WIRE_WIDTH = 26;
+/** Charging cabinet footprint. */
+const DOCK_SIZE = 300;
 const BEACON_SIZE = 150;
 
 /**
@@ -255,6 +258,60 @@ export class LightingPass {
       batch.pushRegion(
         REGIONS.radial, t.bay.x, midY, 0, d, d,
         1.0, 0.82, 0.6, level * 0.55,
+      );
+    }
+  }
+
+  /**
+   * The charging run on the east wall, into the albedo pass.
+   *
+   * Sealed points are drawn cold and their bay markings left faded: a whole
+   * wall of covered cabinets says what is coming without a word about it.
+   */
+  collectChargers(batch: SpriteBatch, bounds: Bounds): void {
+    for (const pad of this.level.chargers) {
+      if (!visible(bounds, pad.x, pad.y, CHARGE_PAD_W * 2)) continue;
+      const live = pad.unlocked;
+      const paint = live ? 1 : 0.42;
+      batch.pushRegion(
+        REGIONS.chargePad, pad.x, pad.y, 0,
+        CHARGE_PAD_W, CHARGE_PAD_H, 1, 1, 1, paint,
+      );
+      const cold = live ? 1 : 0.72;
+      batch.pushRegion(
+        // The art faces +x; the run is on the east wall, so it turns to face
+        // back into the hall.
+        live ? REGIONS.chargeDock : REGIONS.chargeDockSealed,
+        pad.dockX, pad.y, Math.PI, DOCK_SIZE, DOCK_SIZE, cold, cold, cold, 1,
+      );
+    }
+  }
+
+  /** Contact glow at a live point, into the emissive pass. */
+  collectChargerGlow(batch: SpriteBatch, bounds: Bounds, time: number): void {
+    for (const pad of this.level.chargers) {
+      if (!pad.unlocked) continue;
+      if (!visible(bounds, pad.x, pad.y, CHARGE_PAD_W * 2)) continue;
+      const breathe = 0.62 + 0.38 * Math.sin(time * 1.6 + pad.index);
+      batch.pushRegion(
+        REGIONS.chargeGlow, pad.dockX - DOCK_SIZE * 0.34, pad.y, 0,
+        DOCK_SIZE * 0.9, DOCK_SIZE * 0.9, 1, 1, 1, 0.35 + breathe * 0.45,
+      );
+    }
+  }
+
+  /** The pool a live point throws onto its bay. */
+  collectChargerLights(
+    batch: SpriteBatch, bounds: Bounds, time: number, settings: Settings,
+  ): void {
+    if (!settings.lighting) return;
+    for (const pad of this.level.chargers) {
+      if (!pad.unlocked) continue;
+      if (!visible(bounds, pad.x, pad.y, 1200)) continue;
+      const breathe = 0.62 + 0.38 * Math.sin(time * 1.6 + pad.index);
+      batch.pushRegion(
+        REGIONS.radial, pad.x, pad.y, 0, 1300, 1300,
+        0.32, 1.0, 0.72, 0.22 * breathe,
       );
     }
   }

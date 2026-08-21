@@ -47,6 +47,9 @@
 | Rolling waypoint handover | Implemented | Queued moves no longer brake to a halt at each point | 2026-08-21 | waypoint queue |
 | Productivity board | Implemented | North wall: shipped/quota, revenue, average per crate | 2026-08-21 | ledger |
 | Shift ledger / economy | Implemented | Crate values by material and size; resets at midnight | 2026-08-21 | — |
+| Ship on departure | Implemented | Crates and money count when the truck pulls out, not when loaded | 2026-08-21 | ledger |
+| Charging run, east wall | Implemented | Ten points, numbered from the south, all sealed; unlocking is a flag | 2026-08-21 | — |
+| Robot battery / charging behaviour | Planned | The run exists as furniture; nothing drains or docks yet | — | charging run |
 | Long hauler / big hauler / heavy hauler | Planned | Needed for 1x2, 2x2 and steel crates respectively | — | hauler class gating |
 | Bays 1-3 unlock | Planned | Presumably a progression cost | — | one bay unlocked |
 | Flying robots | Planned | Must ignore terrain/congestion, cost energy | — | — |

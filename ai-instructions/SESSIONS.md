@@ -137,3 +137,32 @@ does not turn the readout into confetti.
 
 Not done: nothing was cut. Refused orders are now silent by design — see
 WORKING_NOTES "No explanatory UI, ever" before adding any feedback for them.
+
+---
+
+## 2026-08-21 — Claude Code (Opus 5) — shipping on departure, charging run
+
+**Shipping moved to departure.** `Ledger.record` is gone, replaced by `ship(cargo)`
+fired from `TrailerFleet.onDeparted` at the Closing→Leaving transition, and
+`load(now)` fired from `Game.onDelivered`. Shipped and revenue are batched;
+average-per-crate stays live off loading. See WORKING_NOTES for why they are
+split.
+
+**Quota dropped 24 → 12** because the hall only held 23 liftable crates, and the
+crate clusters were thickened (`rng.int(6, 9)` per cluster) to make up for the
+east service lane. 52 crates now, 29 of them liftable — a little over two loads.
+
+**Ten charging points on the east wall**, `buildChargePads()`, numbered from the
+south corner running north at 620 pitch. All locked. New atlas art: `chargeDock`,
+`chargeDockSealed`, `chargePad`, `chargeGlow`. `LightingPass.collectChargers` /
+`collectChargerGlow` / `collectChargerLights`. `buildProps` keeps a 950 cm
+service lane along the east wall clear of cargo.
+
+Verified: three crates loaded leave the board at 0/$0 until the plate dispatch
+sends the trailer, then 3/$135 at the moment it starts rolling; a full twelve
+does the same on its automatic departure. The average ticked 17.0 → 16.0 → 16.6
+while loading, untouched by the departure.
+
+Not done: nothing was cut. There is still no charging BEHAVIOUR — no battery, no
+docking, no drain. The run is furniture with a working unlocked/locked flag and
+the lit state already wired, waiting for whatever powers it.

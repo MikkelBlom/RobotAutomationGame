@@ -85,6 +85,7 @@ export class Game {
     this.renderer.setLevel(this.level);
     this.nav = new NavGrid(this.level.columns, this.level.props, this.level.bays, BOT_RADIUS);
     this.bots.onDelivered = this.onDelivered;
+    this.trailers.onDeparted = (load) => this.ledger.ship(load);
     this.bots.onResolveDrop = this.resolveDrop;
     this.bots.setProps(this.level.props);
     this.entities = new EntityRenderer(this.bots);
@@ -401,9 +402,7 @@ export class Game {
       material: material as CrateMaterialValue,
       shape: shape as CrateShapeValue,
     };
-    this.ledger.record(
-      material as CrateMaterialValue, shape as CrateShapeValue, this.elapsed,
-    );
+    this.ledger.load(this.elapsed);
     // The crate is an obstacle from now on.
     this.nav.rebuildBayCorridors(this.level.bays, this.trailerCargoBlocks());
   };
