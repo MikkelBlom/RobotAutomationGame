@@ -4,7 +4,7 @@ import { BOT_LENGTH, BOT_RADIUS, BOT_WIDTH, BotState, BotTask, type BotPool } fr
 import { BOT_ART, REGIONS } from './atlas';
 import { crateQuad, crateRegion, outlineQuad, outlineRect } from './crateArt';
 import type { CrateMaterialValue, CrateShapeValue } from '../sim/cargo';
-import { CHARGE_PAD_H, CHARGE_PAD_W, FLOOR, type ChargePad } from '../sim/level';
+import { FLOOR } from '../sim/level';
 import { pushCastShadow, type Bounds } from './lighting';
 import type { SpriteBatch } from './spriteBatch';
 
@@ -50,11 +50,17 @@ const BOT_FRAMES = [
 /** Spacing between trail dots, in world units. */
 const TRAIL_STEP = 46;
 /** Hard cap so a huge selection cannot flood the batch. */
-/** Amber: a crate about to be collected. Cyan: a slot about to be filled. */
-const PICK_TINT = { r: 1.0, g: 0.72, b: 0.24 };
-const DROP_TINT = { r: 0.45, g: 0.89, b: 1.0 };
-/** Green: a charging point, matching the light the point itself throws. */
-const DOCK_TINT = { r: 0.42, g: 1.0, b: 0.62 };
+/**
+ * Two colours, and the difference between them is the whole point.
+ *
+ * Cyan is a SUGGESTION — the slot a delivery would go to if you ordered one.
+ * Green is a COMMITMENT — a crate a machine is on its way to collect, a slot it
+ * is on its way to fill, a point it is on its way to dock at. Colour by kind
+ * instead and the player learns three signals for one idea while still not
+ * knowing which of them they have actually asked for.
+ */
+const MARK_COMMITTED = { r: 0.42, g: 1.0, b: 0.62 };
+const MARK_PREVIEW = { r: 0.45, g: 0.89, b: 1.0 };
 
 /**
  * One step of a robot's plan, ready to draw. Built by the game, which is the
@@ -77,6 +83,8 @@ export interface PlanMark {
   h?: number;
   /** 0 for the step in progress, rising down the queue. */
   depth: number;
+  /** True once a machine has actually been ordered here. */
+  committed: boolean;
 }
 
 /** How far inside the slab a queued leg turns before heading into a bay. */
@@ -93,9 +101,6 @@ const STRIP_FORWARD = BOT_ART.gauge.x * ART_X;
 /** A hair inside the well, so its edge frames the light on every side. */
 const STRIP_LENGTH = BOT_ART.gauge.halfLen * 2 * ART_Y - 5;
 const STRIP_WIDTH = BOT_ART.gauge.halfWide * 2 * ART_X - 4;
-/** How far inside the cabinet the feed appears to leave from. */
-const FEED_INSET = 120;
-const FEED_PULSES = 3;
 
 const CHARGE_FULL = { r: 0.42, g: 1.0, b: 0.56 };
 const CHARGE_MID = { r: 1.0, g: 0.80, b: 0.24 };
@@ -280,9 +285,7 @@ export class EntityRenderer {
    * band along the strip. Nothing about this is a UI element — with thousands of
    * machines working there is nowhere to put one.
    */
-  drawCharge(
-    batch: SpriteBatch, bounds: Bounds, time: number, chargers: ReadonlyArray<ChargePad>,
-  ): void {
+  drawCharge(batch: SpriteBatch, bounds: Bounds, time: number): void {
     const b = this.bots;
     for (let i = 0; i < b.count; i++) {
       if (!visible(bounds, b.x[i], b.y[i], BOT_LENGTH)) continue;
@@ -327,43 +330,7 @@ export class EntityRenderer {
           STRIP_LENGTH * 0.24, STRIP_WIDTH,
           CHARGE_FULL.r, CHARGE_FULL.g, CHARGE_FULL.b, 0.7,
         );
-        this.drawFeed(batch, b.x[i], b.y[i], chargers, time);
       }
-    }
-  }
-
-  /**
-   * Charge running from the cabinet into the robot: a run of pulses down the
-   * gap. Cheaper and steadier to read than an arc, and it says which way the
-   * power is going, which an arc does not.
-   */
-  private drawFeed(
-    batch: SpriteBatch,
-    botX: number,
-    botY: number,
-    chargers: ReadonlyArray<ChargePad>,
-    time: number,
-  ): void {
-    let pad: ChargePad | undefined;
-    for (const p of chargers) {
-      if (!p.unlocked) continue;
-      if (Math.abs(botX - p.x) > CHARGE_PAD_W || Math.abs(botY - p.y) > CHARGE_PAD_H) continue;
-      pad = p;
-      break;
-    }
-    if (!pad) return;
-    const fromX = pad.dockX - FEED_INSET;
-    const span = fromX - botX;
-    if (Math.abs(span) < 20) return;
-    for (let k = 0; k < FEED_PULSES; k++) {
-      // Travelling from the wall towards the machine.
-      const t = ((time * 0.9 + k / FEED_PULSES) % 1);
-      const fade = Math.sin(t * Math.PI);
-      const size = 26 + fade * 18;
-      batch.pushRegion(
-        REGIONS.dot, fromX - span * t, pad.y, 0, size, size,
-        CHARGE_FULL.r, CHARGE_FULL.g, CHARGE_FULL.b, fade * 0.85,
-      );
     }
   }
 
@@ -530,10 +497,7 @@ export class EntityRenderer {
       // out what is happening now.
       const beat = mark.depth === 0 ? pulse : 0.55;
       const rank = mark.depth === 0 ? 1 : Math.max(0.28, 0.62 - mark.depth * 0.09);
-      const tint =
-        mark.kind === MarkKind.Dock ? DOCK_TINT
-        : mark.kind === MarkKind.Drop ? DROP_TINT
-        : PICK_TINT;
+      const tint = mark.committed ? MARK_COMMITTED : MARK_PREVIEW;
 
       if (mark.kind === MarkKind.Dock) {
         // A charging point has no contents to preview — just the bay it is.
@@ -546,12 +510,12 @@ export class EntityRenderer {
       }
 
       if (mark.kind === MarkKind.Drop) {
-        // A translucent crate in the slot: the shape of what is coming is the
-        // whole point of the mark.
+        // A translucent crate in the slot. This is what tells a drop apart from
+        // a collection, so it has to be plainly visible rather than a hint.
         const q = crateQuad(mark.shape);
         batch.pushRegion(
           crateRegion(mark.material, mark.shape), mark.x, mark.y, mark.angle, q.w, q.h,
-          tint.r, tint.g, tint.b, (0.16 + beat * 0.10) * rank,
+          tint.r, tint.g, tint.b, (0.30 + beat * 0.16) * rank,
         );
       }
       const o = outlineQuad(mark.shape);

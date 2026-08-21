@@ -39,7 +39,15 @@ export const BotState = { Idle: 0, Moving: 1 } as const;
 export const BotTask = { None: 0, Move: 1, Fetch: 2, Deliver: 3, Charge: 4 } as const;
 
 /** Stages of a fetch, after the drive is done. */
-const Phase = { Driving: 0, Aligning: 1, Reaching: 2, Closing: 3, Lifting: 4 } as const;
+const Phase = {
+  Driving: 0,
+  Aligning: 1,
+  Reaching: 2,
+  Closing: 3,
+  Lifting: 4,
+  /** Charging only: reversing into the bay once squared up in front of it. */
+  Backing: 5,
+} as const;
 
 /** How long each stage of the grab takes, in seconds. */
 const REACH_TIME = 0.75;
@@ -67,17 +75,25 @@ const DECEL = 1100;
 const STALL_LIMIT = 2.5;
 
 /**
- * Battery, as a fraction per second.
+ * Battery, as a fraction per second unless stated.
  *
- * A full charge is about three in-game days of steady hauling. Deliberately
- * slow: with no charging point commissioned there is no way back from flat, so
- * until one can be bought this has to be a thing you watch creeping down rather
- * than a wall you hit in the first shift.
+ * Sized so a full charge comfortably covers the first trailer and then some:
+ * about a quarter of a charge for twelve crates, so running out is something
+ * you plan around rather than something that interrupts the first shift.
+ *
+ * Everything costs what it ought to. Sitting still costs almost nothing.
+ * Driving costs by how fast you are going. Driving with a crate aboard costs
+ * more than driving empty, because the machine is carrying it. Working the arms
+ * costs a lump, and lifting costs more than setting down.
  */
-const DRAIN_DRIVING = 1 / 1600;
-const DRAIN_IDLE = 1 / 9000;
-/** One grab costs as much as several seconds of driving. */
-const DRAIN_PER_LIFT = 0.010;
+const DRAIN_IDLE = 1 / 14000;
+const DRAIN_DRIVING = 1 / 2000;
+/** Extra cost of driving with a load on the deck. */
+const LADEN_MULTIPLIER = 1.65;
+/** Taking a crate up off the floor. */
+const DRAIN_PER_LIFT = 0.0085;
+/** Lowering one, which is the same actuators doing less work. */
+const DRAIN_PER_PLACE = 0.0055;
 /** A point fills a robot in about twenty seconds. */
 const CHARGE_RATE = 1 / 20;
 /** Below this a robot is dead: it crawls, and it will not lift anything. */
@@ -85,15 +101,23 @@ export const BATTERY_DEAD = 0.001;
 /** What a flat robot can still manage, as a fraction of its rated speed. */
 const DEAD_SPEED = 0.16;
 /** Nose east, into the cabinet: the charge strip is on the front of the hull. */
-const DOCK_FACING = 0;
 /**
- * Where a robot stops before backing onto a charging point.
- *
- * Zero would be the pad centre; this is far enough out that the align phase has
- * a straight run in, and it is what `grabReach` is derived from so the two
- * cannot disagree.
+ * Nose OUT of the bay: a machine reverses onto its charger the way it reverses
+ * onto a crate, and it leaves the gauge facing the hall where it can be read.
  */
-const DOCK_STANDOFF = 210;
+const DOCK_FACING = Math.PI;
+/**
+ * Where a robot squares up before reversing in, measured from the pad centre.
+ *
+ * Far enough out to give the reverse a visible run, and the one number both the
+ * approach point and the align standoff are derived from so they cannot drift.
+ */
+const DOCK_APPROACH = 300;
+/** How fast it backs in. Slow, because that is what makes it read as careful. */
+const DOCK_REVERSE_SPEED = 105;
+/** Coupler travel times, in seconds. Out briskly, back in unhurriedly. */
+const ARM_EXTEND_TIME = 0.55;
+const ARM_STOW_TIME = 0.9;
 /** How hard acceleration chases the target speed. */
 const ACCEL_RESPONSE = 9;
 
@@ -659,15 +683,12 @@ export class BotPool {
     index: number, pad: ChargePad, padIndex: number, nav: NavGrid,
   ): boolean {
     if (!pad.unlocked) return false;
-    // In from the hall side, nose towards the cabinet.
-    const target = nav.nearestFree(pad.x - DOCK_STANDOFF, pad.y);
+    // Approach from the hall side and stop short of the bay.
+    const target = nav.nearestFree(pad.x - DOCK_APPROACH, pad.y);
     if (!target) return false;
     if (!this.driveTo(index, target.x, target.y, nav)) return false;
     this.approachX[index] = -1;
     this.approachY[index] = 0;
-    // The align phase parks at anchor + approach * (halfLength + reach + gap);
-    // reach is chosen so that lands the hull centred on the pad.
-    this.grabReach[index] = DOCK_STANDOFF - BOT_HALF_LENGTH - GRAB_GAP;
     this.placeX[index] = pad.x;
     this.placeY[index] = pad.y;
     this.targetPad[index] = padIndex;
@@ -783,6 +804,8 @@ export class BotPool {
    * itself in when it is stood in the right place needs no explaining.
    */
   private updatePower(dt: number, drainEnabled: boolean): void {
+    for (const pad of this.chargers) pad.drawing = false;
+
     for (let i = 0; i < this.count; i++) {
       let point: ChargePad | undefined;
       for (const pad of this.chargers) {
@@ -796,10 +819,13 @@ export class BotPool {
       this.charging[i] = point ? 1 : 0;
 
       if (point) {
-        this.battery[i] = Math.min(1, this.battery[i] + CHARGE_RATE * dt);
-        // Settle square onto the pad, nose to the cabinet. There is no docking
-        // sequence to run — a machine that has stopped in the right place tidies
-        // itself into the bay, which is all the sequence would have looked like.
+        // Nothing flows until the coupler has actually reached the machine.
+        point.drawing = this.battery[i] < 1;
+        if (point.arm > 0.94) {
+          this.battery[i] = Math.min(1, this.battery[i] + CHARGE_RATE * dt);
+        }
+        // A machine that wandered onto a pad without being sent tidies itself
+        // square anyway, so a bay never holds something sitting crooked.
         const working =
           this.task[i] === BotTask.Fetch ||
           this.task[i] === BotTask.Deliver ||
@@ -817,10 +843,20 @@ export class BotPool {
         continue;
       }
       const moving = this.velocity[i] > 8;
-      const drain = moving
-        ? DRAIN_DRIVING * (this.velocity[i] / this.speed[i])
-        : DRAIN_IDLE;
+      let drain = DRAIN_IDLE;
+      if (moving) {
+        const laden = this.carryMaterial[i] >= 0 ? LADEN_MULTIPLIER : 1;
+        drain = DRAIN_DRIVING * (this.velocity[i] / this.speed[i]) * laden;
+      }
       this.battery[i] = Math.max(0, this.battery[i] - drain * dt);
+    }
+
+    // Couplers reach out to whatever is drawing and stow again when it is done.
+    for (const pad of this.chargers) {
+      const rate = dt / (pad.drawing ? ARM_EXTEND_TIME : ARM_STOW_TIME);
+      pad.arm = pad.drawing
+        ? Math.min(1, pad.arm + rate)
+        : Math.max(0, pad.arm - rate);
     }
   }
 
@@ -936,6 +972,7 @@ export class BotPool {
           this.targetProp[i] = -1;
           onPropTaken?.(removed);
         } else {
+          this.battery[i] = Math.max(0, this.battery[i] - DRAIN_PER_PLACE);
           // Setting down runs the same travel in reverse: the crate leaves the
           // deck and descends to the mark.
           this.liftFromX[i] = anchorX;
@@ -987,19 +1024,49 @@ export class BotPool {
     }
 
     this.phaseTime[i] += dt;
-    const parkX = this.placeX[i];
-    const parkY = this.placeY[i];
-    const ease = Math.min(1, dt * 3.4);
-    this.x[i] += (parkX - this.x[i]) * ease;
-    this.y[i] += (parkY - this.y[i]) * ease;
-    const delta = angleDelta(this.angle[i], DOCK_FACING);
-    this.angle[i] += clamp(delta, -this.turnRate[i] * dt, this.turnRate[i] * dt);
 
-    const offset = Math.hypot(parkX - this.x[i], parkY - this.y[i]);
-    if ((Math.abs(delta) < ALIGN_ANGLE && offset < ALIGN_DISTANCE) || this.phaseTime[i] > 5) {
-      this.x[i] = parkX;
-      this.y[i] = parkY;
+    if (this.taskPhase[i] === Phase.Aligning) {
+      // Square up in FRONT of the bay, nose pointing back out of it.
+      const parkX = this.placeX[i] - DOCK_APPROACH;
+      const parkY = this.placeY[i];
+      const ease = Math.min(1, dt * 3.4);
+      this.x[i] += (parkX - this.x[i]) * ease;
+      this.y[i] += (parkY - this.y[i]) * ease;
+      const delta = angleDelta(this.angle[i], DOCK_FACING);
+      this.angle[i] += clamp(delta, -this.turnRate[i] * dt, this.turnRate[i] * dt);
+
+      const offset = Math.hypot(parkX - this.x[i], parkY - this.y[i]);
+      if ((Math.abs(delta) < ALIGN_ANGLE && offset < ALIGN_DISTANCE) || this.phaseTime[i] > 5) {
+        this.x[i] = parkX;
+        this.y[i] = parkY;
+        this.angle[i] = DOCK_FACING;
+        this.taskPhase[i] = Phase.Backing;
+        this.phaseTime[i] = 0;
+      }
+      return;
+    }
+
+    // Reversing in. Straight back along the hull, tracks running the other way,
+    // with any lateral error eased out on the way.
+    const backX = -Math.cos(this.angle[i]);
+    const backY = -Math.sin(this.angle[i]);
+    const remaining =
+      (this.placeX[i] - this.x[i]) * backX + (this.placeY[i] - this.y[i]) * backY;
+    const step = Math.min(DOCK_REVERSE_SPEED * dt, Math.max(0, remaining));
+    this.x[i] += backX * step;
+    this.y[i] += backY * step;
+    // Negative, so the track frames run backwards while it reverses.
+    this.odometer[i] -= step;
+    const lateral = Math.min(1, dt * 3);
+    this.x[i] += (this.placeX[i] - this.x[i]) * lateral * Math.abs(backY);
+    this.y[i] += (this.placeY[i] - this.y[i]) * lateral * Math.abs(backX);
+    this.velocity[i] = DOCK_REVERSE_SPEED * 0.35;
+
+    if (remaining <= 1 || this.phaseTime[i] > 8) {
+      this.x[i] = this.placeX[i];
+      this.y[i] = this.placeY[i];
       this.angle[i] = DOCK_FACING;
+      this.velocity[i] = 0;
       this.task[i] = BotTask.None;
       this.targetPad[i] = -1;
       this.taskPhase[i] = Phase.Driving;

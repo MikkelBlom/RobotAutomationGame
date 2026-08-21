@@ -110,6 +110,11 @@ const CELLS = {
   /** Charge readout on a robot's deck. Tinted and scaled at draw time. */
   chargeStrip: [1280, 1024, 256, 256],
 
+  /** Charging coupler, stowed at the cell's right edge and reaching towards -x. */
+  chargeArm: [1536, 1024, 256, 256],
+  /** A single arc, struck from the coupler head towards -x. */
+  spark: [1792, 1024, 256, 256],
+
   /** Charging cabinet, live. Connector faces +x. */
   chargeDock: [256, 1024, 256, 256],
   /** The same cabinet still sealed from the factory. */
@@ -219,6 +224,8 @@ export function buildAtlas(seed: number): HTMLCanvasElement {
   drawCrateVariants(ctx, seed);
   drawCrateOutline(ctx);
   drawChargeStrip(ctx);
+  drawChargeArm(ctx);
+  drawSpark(ctx);
   drawChargeDock(ctx, false);
   drawChargeDock(ctx, true);
   drawChargePad(ctx, makeRng(seed ^ 0x2f19));
@@ -1649,4 +1656,81 @@ function drawChargeStrip(ctx: CanvasRenderingContext2D): void {
   ctx.globalCompositeOperation = 'source-over';
   ctx.restore();
 
+}
+
+/**
+ * The coupler a charging point reaches out with.
+ *
+ * A boom running the length of the cell with a contact head on the leading end,
+ * so the renderer can stretch it to whatever the gap happens to be and the head
+ * still lands on the machine.
+ */
+function drawChargeArm(ctx: CanvasRenderingContext2D): void {
+  const { size } = cell(ctx, 'chargeArm');
+  const half = size / 2;
+  const t = size * 0.115;
+
+  // Boom.
+  ctx.fillStyle = '#2b3138';
+  ctx.fillRect(-half, -t / 2, size, t);
+  ctx.fillStyle = 'rgba(190,205,218,0.20)';
+  ctx.fillRect(-half, -t / 2, size, t * 0.28);
+  ctx.fillStyle = 'rgba(0,0,0,0.42)';
+  ctx.fillRect(-half, t / 2 - t * 0.3, size, t * 0.3);
+  // Ribs, so extension is visible as travel rather than as a growing bar.
+  ctx.fillStyle = 'rgba(12,14,16,0.55)';
+  for (let x = -half + size * 0.10; x < half - size * 0.12; x += size * 0.11) {
+    ctx.fillRect(x, -t / 2, size * 0.016, t);
+  }
+
+  // Contact head, on the leading end.
+  const hw = size * 0.085;
+  const hh = size * 0.115;
+  ctx.fillStyle = '#3c444c';
+  ctx.beginPath();
+  ctx.roundRect(-half, -hh, hw * 2, hh * 2, 4);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(10,12,14,0.7)';
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  // Copper contacts.
+  ctx.fillStyle = '#b4762c';
+  for (const sy of [-1, 1]) {
+    ctx.fillRect(-half + 3, sy * hh * 0.46 - hh * 0.16, hw * 1.5, hh * 0.32);
+  }
+  ctx.restore();
+}
+
+/**
+ * One arc, struck from the coupler head towards -x.
+ *
+ * Drawn as a jagged path rather than a glow blob: an arc is a line that cannot
+ * decide where it is going, and a soft dot reads as a light, not electricity.
+ */
+function drawSpark(ctx: CanvasRenderingContext2D): void {
+  const { size } = cell(ctx, 'spark');
+  const half = size / 2;
+  const rng = makeRng(0x5eed);
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  for (let pass = 0; pass < 2; pass++) {
+    // Two passes: a wide soft one under a tight bright one, which is what gives
+    // a drawn line the bloom a real arc has.
+    ctx.lineWidth = pass === 0 ? size * 0.11 : size * 0.035;
+    ctx.globalAlpha = pass === 0 ? 0.22 : 1;
+    ctx.beginPath();
+    ctx.moveTo(half * 0.92, 0);
+    const steps = 7;
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      const x = half * 0.92 - t * size * 0.86;
+      // Wander grows away from the head, then pinches back to a point.
+      const spread = Math.sin(t * Math.PI) * size * 0.17;
+      ctx.lineTo(x, rng.range(-spread, spread));
+    }
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
 }

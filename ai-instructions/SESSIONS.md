@@ -247,3 +247,27 @@ advancing the sim 3.5 s of simulation with the page hidden and rAF stopped.
 
 Not done: nothing cut. Offline progress beyond `MAX_CATCH_UP` (20 s) is lost —
 see the handoff.
+
+---
+
+## 2026-08-22 — Claude Code (Opus 5) — reverse docking, marks, drain model
+
+- **Marks recoloured by commitment**, not by kind. `PlanMark.committed`: cyan for
+  the offered slot, green once a machine is actually on its way. The drop ghost
+  crate is much more visible (alpha 0.30+ rather than 0.16).
+- **Reverse-in docking.** New `Phase.Backing`; `DOCK_FACING` is now π so the
+  machine ends nose-out with its gauge facing the hall. Odometer runs negative
+  while reversing so the tracks turn the right way.
+- **Coupler and arcs** replace the travelling green dots. `ChargePad.arm` and
+  `.drawing` are runtime state on the pad; nothing charges until `arm > 0.94`,
+  and the coupler stows once the battery is full. New atlas cells `chargeArm`
+  and `spark`.
+- **Drive bed quietened** substantially; see WORKING_NOTES for the numbers.
+- **Drain model** rebuilt around what each action costs, laden driving included.
+  Measured 29.4% of a charge for a full trailer.
+
+Verified: reverse dock lands at exactly (11800, 7880) at 180°, coupler extends,
+charges, retracts at full; committed marks green and the preview cyan; plate
+dispatch still fires; 901 robots at sim 1.49 ms / draw 1.57 ms.
+
+Not done: nothing cut.

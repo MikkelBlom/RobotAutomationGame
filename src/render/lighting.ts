@@ -68,6 +68,28 @@ export function pushCastShadow(
 const PLATE_WIRE_WIDTH = 17;
 /** Charging cabinet footprint. */
 const DOCK_SIZE = 300;
+/**
+ * Coupler geometry, in centimetres.
+ *
+ * Full extension has to put the head ON the machine's rear and no further. The
+ * cabinet's face stands 99 cm off the pad centre plus the hull's half length,
+ * so a longer reach buries the head — and its arcs — inside the robot where
+ * neither can be seen.
+ */
+const ARM_STOWED = 24;
+const ARM_TRAVEL = 78;
+const ARM_WIDTH = 40;
+/** Arcs per point, and how many times a second they are restruck. */
+const ARC_COUNT = 3;
+const ARC_RATE = 14;
+
+/** Deterministic 0..1 from two integers. Keeps the arcs stable frame to frame. */
+function hash2(a: number, b: number): number {
+  let h = (Math.imul(a | 0, 0x27d4eb2d) ^ Math.imul(b | 0, 0x165667b1)) >>> 0;
+  h ^= h >>> 15;
+  h = Math.imul(h, 0x2545f491) >>> 0;
+  return (h >>> 8) / 0xffffff;
+}
 const BEACON_SIZE = 190;
 
 /**
@@ -283,10 +305,20 @@ export class LightingPass {
         live ? REGIONS.chargeDock : REGIONS.chargeDockSealed,
         pad.dockX, pad.y, Math.PI, DOCK_SIZE, DOCK_SIZE, cold, cold, cold, 1,
       );
+
+      // The coupler, reaching from the cabinet towards whatever is on the pad.
+      if (pad.arm > 0.002) {
+        const from = pad.dockX - DOCK_SIZE * 0.30;
+        const reach = ARM_STOWED + pad.arm * ARM_TRAVEL;
+        batch.pushRegion(
+          REGIONS.chargeArm, from - reach / 2, pad.y, 0,
+          reach, ARM_WIDTH, 1, 1, 1, 1,
+        );
+      }
     }
   }
 
-  /** Contact glow at a live point, into the emissive pass. */
+  /** Cabinet lamp and, while power is flowing, the arcs at the contacts. */
   collectChargerGlow(batch: SpriteBatch, bounds: Bounds, time: number): void {
     for (const pad of this.level.chargers) {
       if (!pad.unlocked) continue;
@@ -294,7 +326,36 @@ export class LightingPass {
       const breathe = 0.62 + 0.38 * Math.sin(time * 1.6 + pad.index);
       batch.pushRegion(
         REGIONS.chargeGlow, pad.dockX - DOCK_SIZE * 0.34, pad.y, 0,
-        DOCK_SIZE * 0.9, DOCK_SIZE * 0.9, 1, 1, 1, 0.35 + breathe * 0.45,
+        DOCK_SIZE * 0.62, DOCK_SIZE * 0.62, 1, 1, 1, 0.28 + breathe * 0.34,
+      );
+      if (!pad.drawing || pad.arm < 0.9) continue;
+
+      // Arcs at the coupler head. Struck from a hash of time and index rather
+      // than a random number, so a paused frame does not reshuffle them and
+      // every point in the run flickers on its own schedule.
+      const headX = pad.dockX - DOCK_SIZE * 0.30 - (ARM_STOWED + pad.arm * ARM_TRAVEL);
+      for (let k = 0; k < ARC_COUNT; k++) {
+        const beat = Math.floor(time * ARC_RATE + k * 0.37 + pad.index * 1.7);
+        const seed = hash2(beat, k + pad.index * 8);
+        // Most beats are dark: an arc that is always there is a lamp.
+        if (seed > 0.52) continue;
+        const life = (time * ARC_RATE + k * 0.37 + pad.index * 1.7) % 1;
+        const fade = Math.max(0, 1 - life * 2.4);
+        if (fade <= 0) continue;
+        const len = 22 + seed * 62;
+        const spin = (hash2(beat, k + 41) - 0.5) * 1.5;
+        batch.pushRegion(
+          REGIONS.spark,
+          headX - Math.cos(spin) * len * 0.5, pad.y - Math.sin(spin) * len * 0.5, spin,
+          len, len * 0.5,
+          0.72, 0.95, 1.0, fade * (0.5 + seed * 0.9),
+        );
+      }
+      // The flash the arcs throw onto the machine.
+      const flicker = hash2(Math.floor(time * ARC_RATE), pad.index);
+      batch.pushRegion(
+        REGIONS.chargeGlow, headX, pad.y, 0, 190, 190,
+        0.7, 0.94, 1.0, 0.14 + flicker * 0.34,
       );
     }
   }

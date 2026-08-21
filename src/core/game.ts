@@ -325,7 +325,7 @@ export class Game {
       drawGlow: (batch, bounds) => {
         this.entities.drawGlow(batch, bounds, lighting, time);
         this.entities.drawTrails(batch, bounds, time, this.settings);
-        this.entities.drawCharge(batch, bounds, time, this.level.chargers);
+        this.entities.drawCharge(batch, bounds, time);
       },
       ledger: this.ledger,
       drawMarks: (batch, bounds) => {
@@ -504,8 +504,9 @@ export class Game {
       moving++;
       paceSum += this.bots.velocity[i] / this.bots.speed[i];
     }
-    // Saturates quickly: eight machines working already sounds like a shift.
-    const activity = moving === 0 ? 0 : Math.min(1, 0.35 + moving / 8);
+    // Saturates gently. Ramping to full on eight machines meant a busy hall sat
+    // permanently at the ceiling, which is how an ambient bed turns into noise.
+    const activity = moving === 0 ? 0 : Math.min(1, 0.22 + Math.sqrt(moving) / 9);
     this.sfx.drive(activity, moving === 0 ? 0 : paceSum / moving);
 
     // One chirp per beacon flash, while any dock is warning.
@@ -600,7 +601,7 @@ export class Game {
       const pick = (prop: Prop): void => {
         marks.push({
           x: prop.x, y: prop.y, angle: prop.angle, kind: MarkKind.Pick,
-          material: prop.material, shape: prop.shape, depth,
+          material: prop.material, shape: prop.shape, depth, committed: true,
         });
         load = { material: prop.material, shape: prop.shape };
         depth++;
@@ -609,7 +610,7 @@ export class Game {
         marks.push({
           x: pad.x, y: pad.y, angle: 0, kind: MarkKind.Dock,
           material: 0 as CrateMaterialValue, shape: 0 as CrateShapeValue,
-          w: CHARGE_PAD_W, h: CHARGE_PAD_H, depth,
+          w: CHARGE_PAD_W, h: CHARGE_PAD_H, depth, committed: true,
         });
         depth++;
       };
@@ -619,7 +620,7 @@ export class Game {
         const pos = TrailerFleet.slotPosition(trailer, slot);
         marks.push({
           x: pos.x, y: pos.y, angle: 0, kind: MarkKind.Drop,
-          material: load.material, shape: load.shape, depth,
+          material: load.material, shape: load.shape, depth, committed: true,
         });
         slot++;
         load = null;
@@ -677,6 +678,8 @@ export class Game {
     marks.push({
       x: pos.x, y: pos.y, angle: 0, kind: MarkKind.Drop,
       material: load.material, shape: load.shape, depth: marks.length,
+      // Nothing has been ordered here — this is the slot a click WOULD use.
+      committed: false,
     });
     return pos;
   }

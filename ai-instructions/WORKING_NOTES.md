@@ -486,3 +486,43 @@ point is now a real `BotTask.Charge` with its own green route mark, driving to a
 standoff and then running an align phase, rather than drifting to the middle of
 whatever pad it happened to stop on. `DOCK_STANDOFF` is the single number the
 approach point and `grabReach` are both derived from, so they cannot disagree.
+
+## Marks, couplers and drain (2026-08-22)
+
+**Colour marks by COMMITMENT, not by kind.** Amber for a pickup, cyan for a drop
+and green for a dock made the player learn three signals for one idea, and still
+left them unable to tell an order they had given from a slot the game was merely
+offering. Now: cyan is a suggestion (the slot a delivery WOULD use), green is a
+commitment (something a machine is actually on its way to). `PlanMark.committed`
+carries it. What differs between kinds is drawn INSIDE the brackets — a ghost
+crate for a drop, nothing for a dock — not the bracket colour.
+
+**A machine reverses onto its charger.** Driving to the edge and rotating into
+place read as floating. `Phase.Backing` is a fifth phase after Aligning: square
+up in FRONT of the bay nose-out, then reverse straight back along the hull with
+the odometer running negative so the tracks turn the right way. Nose-out also
+puts the charge gauge where it can be read from the hall. `DOCK_APPROACH` is the
+one number both the approach point and the align standoff come from.
+
+**Full extension has to land ON the thing.** The coupler's first numbers put its
+head 85 cm inside the robot's hull, which hid the head and every arc it struck.
+Cabinet face to hull rear is 99 cm; the reach is 24 + 78 = 102. Anything drawn at
+a contact point needs its geometry derived from both bodies, not guessed.
+
+**Arcs are lines, not glows.** A soft dot at a contact reads as a lamp. The
+`spark` cell is a jagged path drawn twice, a wide dim pass under a tight bright
+one, which is where the bloom comes from. They are struck from `hash2(beat,
+index)` rather than `Math.random`, so a paused frame does not reshuffle them and
+each point in the run flickers on its own schedule.
+
+**The ambient bed is the sound you hear for the whole session.** It was mixed
+like an effect. Level down from 0.26 to 0.085, the inverter whine from 0.055 to
+0.018 and its sweep pulled down out of the piercing range, and the activity
+curve changed from `0.35 + n/8` to `0.22 + sqrt(n)/9` so a busy hall no longer
+sits permanently at the ceiling.
+
+**Drain by what the work costs.** Idle is nearly free, driving scales with
+speed, driving with a crate aboard costs 1.65x driving empty, lifting costs more
+than setting down. Measured: a full trailer of twelve crates uses 29.4% of a
+charge, so the first load leaves 70% in the tank and a charge is worth about
+three and a half trailers.

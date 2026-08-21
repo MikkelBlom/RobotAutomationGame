@@ -145,7 +145,10 @@ export class Sfx {
     // Inverter whine. This is the single thing that says "electric" — take it
     // away and the bed could be any machine at all.
     const whineGain = ctx.createGain();
-    whineGain.gain.value = 0.055;
+    // Very quiet. This is the sound you hear for the entire session, and an
+    // inverter whine you can pick out individually becomes maddening inside a
+    // minute — it only has to be present, not audible as a note.
+    whineGain.gain.value = 0.018;
     whineGain.connect(bed);
     this.whine = ctx.createOscillator();
     this.whine.type = 'triangle';
@@ -159,7 +162,7 @@ export class Sfx {
     rumbleFilter.type = 'lowpass';
     rumbleFilter.frequency.value = 190;
     const rumbleGain = ctx.createGain();
-    rumbleGain.gain.value = 0.30;
+    rumbleGain.gain.value = 0.22;
     rumbleFilter.connect(rumbleGain).connect(bed);
     const rumble = ctx.createBufferSource();
     rumble.buffer = this.noise;
@@ -181,15 +184,16 @@ export class Sfx {
     const ctx = this.ctx;
     if (!ctx || !this.bedGain || !this.motorA || !this.motorB || !this.whine) return;
     const now = ctx.currentTime;
-    const level = this.enabled ? Math.min(0.26, activity * 0.26) : 0;
+    const level = this.enabled ? Math.min(0.085, activity * 0.085) : 0;
     this.bedGain.gain.setTargetAtTime(level, now, 0.15);
     // Motor and whine both track pace, the whine much harder — that rising
     // note under load is most of what makes an electric drive recognisable.
     const rpm = 74 + pace * 96;
     this.motorA.frequency.setTargetAtTime(rpm, now, 0.25);
     this.motorB.frequency.setTargetAtTime(rpm * 1.011, now, 0.25);
-    this.whine.frequency.setTargetAtTime(900 + pace * 2100, now, 0.2);
-    this.motorFilter?.frequency.setTargetAtTime(320 + pace * 520, now, 0.25);
+    // A narrower sweep, and lower: the old range topped out somewhere piercing.
+    this.whine.frequency.setTargetAtTime(700 + pace * 780, now, 0.25);
+    this.motorFilter?.frequency.setTargetAtTime(280 + pace * 300, now, 0.25);
   }
 
   /** True if this voice is allowed to fire right now. */

@@ -276,6 +276,10 @@ export interface ChargePad {
   /** Position in the run, counted from the south end. */
   index: number;
   unlocked: boolean;
+  /** How far the coupler is out, 0 stowed to 1 connected. */
+  arm: number;
+  /** True while there is a robot on it that still wants charge. */
+  drawing: boolean;
 }
 
 /** Ten points, spaced so a robot can turn into one without clipping its neighbour. */
@@ -300,6 +304,8 @@ export function buildChargePads(): ChargePad[] {
       dockX: wall + WALL_THICKNESS * 0.42,
       index: i,
       unlocked: false,
+      arm: 0,
+      drawing: false,
     });
   }
   return pads;

@@ -59,6 +59,9 @@
 | Dispatch plate latch | Implemented | Lamp off once the truck goes; step off and on to re-arm | 2026-08-21 | dispatch plates |
 | Runs while the tab is hidden | Implemented | Worker clock + real-elapsed catch-up, capped at 20s per tick | 2026-08-21 | — |
 | Offline progress | Planned | Needs a rate model; long absences are currently just lost | — | runs while hidden |
+| Reverse-in charging dock | Implemented | Squares up in front, then backs in; gauge ends facing the hall | 2026-08-22 | charging dock order |
+| Charging coupler + arcs | Implemented | Cabinet extends a contact head; arcs while drawing, stows when full | 2026-08-22 | reverse-in dock |
+| Marks coloured by commitment | Implemented | Cyan offered, green ordered; ghost crate shows what will land | 2026-08-22 | queue plan marks |
 | Long hauler / big hauler / heavy hauler | Planned | Needed for 1x2, 2x2 and steel crates respectively | — | hauler class gating |
 | Bays 1-3 unlock | Planned | Presumably a progression cost | — | one bay unlocked |
 | Flying robots | Planned | Must ignore terrain/congestion, cost energy | — | — |
