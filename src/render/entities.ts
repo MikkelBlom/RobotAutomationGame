@@ -4,6 +4,7 @@ import { BOT_LENGTH, BOT_RADIUS, BOT_WIDTH, BotState, BotTask, type BotPool } fr
 import { BOT_ART, REGIONS } from './atlas';
 import { crateQuad, crateRegion, outlineQuad } from './crateArt';
 import type { CrateMaterialValue, CrateShapeValue } from '../sim/cargo';
+import { FLOOR } from '../sim/level';
 import { pushCastShadow, type Bounds } from './lighting';
 import type { SpriteBatch } from './spriteBatch';
 
@@ -49,6 +50,29 @@ const BOT_FRAMES = [
 /** Spacing between trail dots, in world units. */
 const TRAIL_STEP = 46;
 /** Hard cap so a huge selection cannot flood the batch. */
+/** Amber: a crate about to be collected. Cyan: a slot about to be filled. */
+const PICK_TINT = { r: 1.0, g: 0.72, b: 0.24 };
+const DROP_TINT = { r: 0.45, g: 0.89, b: 1.0 };
+
+/**
+ * One step of a robot's plan, ready to draw. Built by the game, which is the
+ * only place that can see both a robot's order queue and the trailer's slots.
+ */
+export interface PlanMark {
+  x: number;
+  y: number;
+  angle: number;
+  material: CrateMaterialValue;
+  shape: CrateShapeValue;
+  /** True for a slot being filled, false for a crate being collected. */
+  drop: boolean;
+  /** 0 for the step in progress, rising down the queue. */
+  depth: number;
+}
+
+/** How far inside the slab a queued leg turns before heading into a bay. */
+const DOORWAY_INSET = 260;
+
 const MAX_TRAIL_DOTS = 4000;
 
 function visible(b: Bounds, x: number, y: number, pad: number): boolean {
@@ -293,30 +317,53 @@ export class EntityRenderer {
       }
 
       // Queued legs, straight and dimmer — they have not been pathed yet, so
-      // showing a route here would be a lie. Numbered by size instead.
+      // showing a route here would be a lie.
+      //
+      // The one liberty taken is a dog-leg at the slab edge for anything inside
+      // a trailer: a straight line to a loading slot cuts across the wall and
+      // out through the dark, which reads as a bug rather than a shortcut.
       const queue = b.queueOf(i);
       if (queue && queue.length > 0) {
         let fromX = b.goalX[i];
         let fromY = b.goalY[i];
-        for (let q = 0; q < queue.length; q++) {
-          const toX = queue[q].x;
-          const toY = queue[q].y;
+        const mouth = FLOOR.y + DOORWAY_INSET;
+        const legs: Array<{ x: number; y: number; target: boolean }> = [];
+        let curX = fromX;
+        let curY = fromY;
+        for (const order of queue) {
+          const goingIn = order.y < mouth;
+          const comingOut = curY < mouth;
+          // Turn at the slab edge on the way out as well as on the way in —
+          // handling only one direction still left every trailer-to-floor leg
+          // slicing across the wall.
+          if (comingOut && !goingIn) legs.push({ x: curX, y: mouth, target: false });
+          if (!comingOut && goingIn) legs.push({ x: order.x, y: mouth, target: false });
+          legs.push({ x: order.x, y: order.y, target: true });
+          curX = order.x;
+          curY = order.y;
+        }
+        for (let q = 0; q < legs.length; q++) {
+          const toX = legs[q].x;
+          const toY = legs[q].y;
           const legLen = Math.hypot(toX - fromX, toY - fromY);
           const ux = (toX - fromX) / (legLen || 1);
           const uy = (toY - fromY) / (legLen || 1);
-          for (let d = 0; d < legLen && dots < MAX_TRAIL_DOTS; d += TRAIL_STEP * 1.9) {
+          // Heavier than they were: at any zoom where you can see the whole
+          // job, a queued leg drawn as faint specks is not a line at all, and
+          // following the chain from one crate to the next was guesswork.
+          for (let d = 0; d < legLen && dots < MAX_TRAIL_DOTS; d += TRAIL_STEP * 1.4) {
             const px = fromX + ux * d;
             const py = fromY + uy * d;
-            if (!visible(bounds, px, py, 40)) continue;
-            const wave = Math.sin(d * 0.016 - time * 3.0);
+            if (!visible(bounds, px, py, 60)) continue;
+            const wave = Math.max(0, Math.sin(d * 0.014 - time * 3.0));
             batch.pushRegion(
-              REGIONS.dot, px, py, 0, 26, 26,
+              REGIONS.dot, px, py, 0, 40 + wave * 16, 40 + wave * 16,
               TRAIL.r, TRAIL.g, TRAIL.b,
-              baseAlpha * 0.22 * (0.5 + 0.5 * Math.max(0, wave)),
+              baseAlpha * 0.40 * (0.45 + 0.55 * wave),
             );
             dots++;
           }
-          if (visible(bounds, toX, toY, 90)) {
+          if (legs[q].target && visible(bounds, toX, toY, 90)) {
             batch.pushRegion(
               REGIONS.marker, toX, toY, time * 0.2, 105, 105,
               TRAIL_PALE.r, TRAIL_PALE.g, TRAIL_PALE.b, baseAlpha * 0.4,
@@ -330,28 +377,37 @@ export class EntityRenderer {
   }
 
   /**
-   * Marks the crate a robot has been sent to collect, so it is obvious which
-   * one the order landed on before the robot has got anywhere near it.
+   * Every crate a selected robot is going to touch, and where each one ends up.
+   *
+   * The step it is working on right now is drawn at full strength; each step
+   * further down the queue is dimmer than the one in front of it. That ordering
+   * IS the readout — it says which crate is next and which slot it lands in
+   * without a word of text, and it is why the marks are ranked rather than all
+   * drawn the same.
    */
-  drawOrderMarks(
-    batch: SpriteBatch,
-    bounds: Bounds,
-    props: ReadonlyArray<{ x: number; y: number; angle: number; shape: CrateShapeValue }>,
-    time: number,
-  ): void {
-    const b = this.bots;
+  drawPlanMarks(batch: SpriteBatch, bounds: Bounds, plan: PlanMark[], time: number): void {
     const pulse = 0.5 + 0.5 * Math.sin(time * 3.2);
-    for (let i = 0; i < b.count; i++) {
-      // targetProp is cleared the instant the crate leaves the floor, so this
-      // only ever marks a crate that is still standing there.
-      if (b.task[i] !== BotTask.Fetch || b.targetProp[i] < 0) continue;
-      const prop = props[b.targetProp[i]];
-      if (!prop) continue;
-      if (!visible(bounds, prop.x, prop.y, 400)) continue;
-      const o = outlineQuad(prop.shape);
+    for (const mark of plan) {
+      if (!visible(bounds, mark.x, mark.y, 400)) continue;
+      // The live step breathes; queued ones sit still, so movement alone picks
+      // out what is happening now.
+      const beat = mark.depth === 0 ? pulse : 0.55;
+      const rank = mark.depth === 0 ? 1 : Math.max(0.28, 0.62 - mark.depth * 0.09);
+      const tint = mark.drop ? DROP_TINT : PICK_TINT;
+
+      if (mark.drop) {
+        // A translucent crate in the slot: the shape of what is coming is the
+        // whole point of the mark.
+        const q = crateQuad(mark.shape);
+        batch.pushRegion(
+          crateRegion(mark.material, mark.shape), mark.x, mark.y, mark.angle, q.w, q.h,
+          tint.r, tint.g, tint.b, (0.16 + beat * 0.10) * rank,
+        );
+      }
+      const o = outlineQuad(mark.shape);
       batch.pushRegion(
-        REGIONS.crateOutline, prop.x, prop.y, prop.angle, o.w, o.h,
-        1.0, 0.72, 0.24, 0.6 + pulse * 0.4,
+        REGIONS.crateOutline, mark.x, mark.y, mark.angle, o.w, o.h,
+        tint.r, tint.g, tint.b, (0.6 + beat * 0.4) * rank,
       );
     }
   }

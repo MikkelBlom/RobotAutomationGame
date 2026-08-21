@@ -192,10 +192,14 @@ export class DayClock {
   /** Real seconds for one full in-game day. */
   dayLengthSeconds = 240;
   paused = false;
+  /** Days elapsed. Counted rather than inferred, so scrubbing time is safe. */
+  day = 0;
 
   advance(dt: number): void {
     if (this.paused || this.dayLengthSeconds <= 0) return;
-    this.hour = (this.hour + (dt / this.dayLengthSeconds) * 24) % 24;
+    const next = this.hour + (dt / this.dayLengthSeconds) * 24;
+    if (next >= 24) this.day += Math.floor(next / 24);
+    this.hour = next % 24;
   }
 
   state(): LightingState {

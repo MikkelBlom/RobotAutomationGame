@@ -41,6 +41,12 @@
 | One bay unlocked | Implemented | Outermost bay only; the other three are shuttered | 2026-08-21 | loading dock |
 | Queued fetch / deliver orders | Implemented | Shift-right-click stacks haulage jobs, not just waypoints | 2026-08-21 | waypoint queue |
 | Grab is uninterruptible | Implemented | Orders during the animation queue instead of cancelling it | 2026-08-21 | — |
+| Queue plan marks | Implemented | Every future pickup and drop marked, ranked by queue depth | 2026-08-21 | queued orders |
+| Free-angle crates | Implemented | Dropped where they fell; approach snaps to the nearest face | 2026-08-21 | — |
+| Dispatch pressure plates | Implemented | One per bay, cabled to a flashing beacon; sends a trailer early | 2026-08-21 | trailer cycle |
+| Rolling waypoint handover | Implemented | Queued moves no longer brake to a halt at each point | 2026-08-21 | waypoint queue |
+| Productivity board | Implemented | North wall: shipped/quota, revenue, average per crate | 2026-08-21 | ledger |
+| Shift ledger / economy | Implemented | Crate values by material and size; resets at midnight | 2026-08-21 | — |
 | Long hauler / big hauler / heavy hauler | Planned | Needed for 1x2, 2x2 and steel crates respectively | — | hauler class gating |
 | Bays 1-3 unlock | Planned | Presumably a progression cost | — | one bay unlocked |
 | Flying robots | Planned | Must ignore terrain/congestion, cost energy | — | — |

@@ -31,8 +31,17 @@ const WORKING_LENGTH = 520;
 
 const ARRIVE_TIME = 3.4;
 const OPEN_TIME = 1.6;
-const CLOSE_TIME = 1.6;
+const CLOSE_TIME = 2.8;
 const LEAVE_TIME = 3.2;
+
+/**
+ * How long a robot has to hold the dispatch plate before the doors commit.
+ *
+ * Without the dwell, merely driving across the plate on the way somewhere else
+ * would send a half-loaded trailer away. The beacon flashes throughout, so the
+ * hold is visible while it is happening rather than a hidden timer.
+ */
+const PLATE_DWELL = 1.3;
 
 /** How far north a trailer sits when it is away — well past the camera limit. */
 export const TRAILER_AWAY_OFFSET = TRAILER_DEPTH + 560;
@@ -54,6 +63,10 @@ export interface Trailer {
   cargo: Array<{ material: CrateMaterialValue; shape: CrateShapeValue } | null>;
   /** In-game hours still to wait before coming back. */
   awayHours: number;
+  /** Seconds the dispatch plate has been held, while docked. */
+  dispatch: number;
+  /** Beacon brightness, 0 to 1. Rises while the doors are being sent shut. */
+  alarm: number;
 }
 
 export class TrailerFleet {
@@ -76,6 +89,8 @@ export class TrailerFleet {
         tint: this.rng.range(0.82, 1.06),
         cargo: new Array(SLOT_COUNT).fill(null),
         awayHours: 0,
+        dispatch: 0,
+        alarm: 0,
       });
       bay.occupied = docked;
     }
@@ -100,6 +115,7 @@ export class TrailerFleet {
     dt: number,
     hours: number,
     occupiedByRobot: (bayX: number) => boolean,
+    plateHeld: (bayX: number) => boolean,
   ): boolean {
     let dockingChanged = false;
 
@@ -107,6 +123,13 @@ export class TrailerFleet {
       if (!t.bay.active) continue;
       const wasDockable = TrailerFleet.isDockable(t);
       t.elapsed += dt;
+
+      // The beacon is on whenever the doors are being sent shut — while the
+      // plate is being held, and all the way out of the bay.
+      const held = t.state === TrailerState.Docked && plateHeld(t.bay.x);
+      const warning =
+        held || t.state === TrailerState.Closing || t.state === TrailerState.Leaving;
+      t.alarm += ((warning ? 1 : 0) - t.alarm) * Math.min(1, dt * 6);
 
       switch (t.state) {
         case TrailerState.Away:
@@ -134,15 +157,21 @@ export class TrailerFleet {
           if (t.elapsed >= OPEN_TIME) this.enter(t, TrailerState.Docked);
           break;
 
-        case TrailerState.Docked:
+        case TrailerState.Docked: {
           t.dock = 1;
           t.doors = 1;
-          // It waits as long as it takes. A trailer leaves when it is loaded,
-          // not on a timer — and never while a robot is still aboard.
-          if (TrailerFleet.isFull(t) && !occupiedByRobot(t.bay.x)) {
+          // Held on the plate long enough counts as a dispatch, however little
+          // is aboard. Letting go before the dwell is up cancels it.
+          t.dispatch = held ? t.dispatch + dt : 0;
+          const sent = t.dispatch >= PLATE_DWELL;
+          // Otherwise it waits as long as it takes: a trailer leaves when it is
+          // loaded, not on a timer — and never while a robot is still aboard.
+          if ((sent || TrailerFleet.isFull(t)) && !occupiedByRobot(t.bay.x)) {
+            t.dispatch = 0;
             this.enter(t, TrailerState.Closing);
           }
           break;
+        }
 
         case TrailerState.Closing:
           t.dock = 1;

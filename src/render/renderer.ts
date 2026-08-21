@@ -13,6 +13,8 @@ import {
 } from './gl';
 import { bakeFloor } from './floorBake';
 import { LightingPass, type Bounds } from './lighting';
+import { QuotaBoard } from './board';
+import type { Ledger } from '../sim/economy';
 import { COMPOSITE_FRAG, FULLSCREEN_VERT } from './shaders';
 import { SpriteBatch } from './spriteBatch';
 import { WaterLayer } from './water';
@@ -34,8 +36,10 @@ export interface FrameContext {
   drawEntityShadows?: (batch: SpriteBatch, bounds: Bounds) => void;
   drawEntityLights?: (batch: SpriteBatch, bounds: Bounds) => void;
   drawGlow?: (batch: SpriteBatch, bounds: Bounds) => void;
-  /** Order marks and the drop ghost. Needs the lighting pass for trailer data. */
-  drawMarks?: (batch: SpriteBatch, bounds: Bounds, pass: LightingPass) => void;
+  /** Order marks: which crates are next, and which slots they land in. */
+  drawMarks?: (batch: SpriteBatch, bounds: Bounds) => void;
+  /** Shift figures for the board on the wall. */
+  ledger?: Ledger;
   drawOverlay?: (batch: SpriteBatch, bounds: Bounds) => void;
 }
 
@@ -81,6 +85,7 @@ export class Renderer {
 
   readonly waterLayer: WaterLayer;
   private lightingPass: LightingPass | null = null;
+  private readonly board = new QuotaBoard();
 
   constructor(container: HTMLElement, seed: number, bays: DockBay[]) {
     const canvas = document.createElement('canvas');
@@ -221,7 +226,9 @@ export class Renderer {
     this.entityBatch.begin();
     pass?.collectColumns(this.entityBatch, bounds, ctx.settings);
     pass?.collectProps(this.entityBatch, bounds, ctx.settings);
+    this.board.collect(this.entityBatch, bounds);
     if (ctx.trailers) {
+      pass?.collectPlates(this.entityBatch, ctx.trailers, bounds);
       pass?.collectTrailers(this.entityBatch, ctx.trailers, bounds);
       pass?.collectTrailerCargo(this.entityBatch, ctx.trailers, bounds);
     }
@@ -244,7 +251,10 @@ export class Renderer {
     this.lightBatch.begin();
     pass?.collectDaylight(this.lightBatch, ctx.lighting, bounds, ctx.settings);
     pass?.collectLamps(this.lightBatch, ctx.lighting, bounds, ctx.time, ctx.settings);
-    if (ctx.trailers) pass?.collectTrailerLights(this.lightBatch, ctx.trailers, bounds, ctx.settings);
+    if (ctx.trailers) {
+      pass?.collectTrailerLights(this.lightBatch, ctx.trailers, bounds, ctx.settings);
+      pass?.collectPlateLights(this.lightBatch, ctx.trailers, bounds, ctx.time, ctx.settings);
+    }
     ctx.drawEntityLights?.(this.lightBatch, bounds);
     sprites += this.lightBatch.length;
     this.lightBatch.flush(view, this.atlasTexture);
@@ -280,6 +290,8 @@ export class Renderer {
     // --------------------------------------------------------------- 4. glow
     applyBlend(gl, BlendMode.Additive);
     this.glowBatch.begin();
+    if (ctx.ledger) this.board.collectGlow(this.glowBatch, bounds, ctx.ledger, ctx.time);
+    if (ctx.trailers) pass?.collectPlateGlow(this.glowBatch, ctx.trailers, bounds, ctx.time);
     ctx.drawGlow?.(this.glowBatch, bounds);
     sprites += this.glowBatch.length;
     this.glowBatch.flush(view, this.atlasTexture);
@@ -287,7 +299,7 @@ export class Renderer {
     // ------------------------------------------------------------ 5. overlay
     applyBlend(gl, BlendMode.Normal);
     this.overlayBatch.begin();
-    if (pass) ctx.drawMarks?.(this.overlayBatch, bounds, pass);
+    ctx.drawMarks?.(this.overlayBatch, bounds);
     ctx.drawOverlay?.(this.overlayBatch, bounds);
     sprites += this.overlayBatch.length;
     this.overlayBatch.flush(view, this.atlasTexture);

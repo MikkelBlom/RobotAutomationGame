@@ -86,6 +86,22 @@ const CELLS = {
   /** One rear door leaf, hinged at the left edge of its cell. */
   trailerDoor: [1280, 512, 256, 256],
 
+  /** Dispatch plate beside a loading bay. */
+  dockPlate: [1280, 768, 256, 256],
+  /** Armoured cable, running the full cell width so runs can be butted. */
+  plateWire: [1536, 768, 256, 256],
+  /** Warning beacon housing, unlit. */
+  warnLamp: [1792, 768, 256, 256],
+  /** The beacon's lens, for the emissive pass. */
+  warnGlow: [0, 1024, 256, 256],
+
+  /** Digits and the few marks the quota board needs, 16 across. */
+  glyphs: [0, 1280, 2048, 128],
+  /** Quota board housing: bezel, dividers, mounting. Unlit. */
+  quotaBoard: [0, 1408, 2048, 192],
+  /** The board's lit face: screen wash and etched labels. Emissive. */
+  quotaScreen: [0, 1600, 2048, 192],
+
   /** Ground robot body. Four frames, tracks advanced a quarter pitch each. */
   botBody0: [0, 512, 256, 256],
   botBody1: [256, 512, 256, 256],
@@ -107,15 +123,55 @@ for (const [name, [x, y, w, h]] of Object.entries(CELLS)) {
   };
 }
 
-function cell(ctx: CanvasRenderingContext2D, name: SpriteName): { size: number } {
+function cell(
+  ctx: CanvasRenderingContext2D, name: SpriteName,
+): { size: number; w: number; h: number } {
   const [x, y, w, h] = CELLS[name];
   ctx.save();
   ctx.beginPath();
   ctx.rect(x, y, w, h);
   ctx.clip();
   ctx.translate(x + w / 2, y + h / 2);
-  return { size: w };
+  return { size: w, w, h };
 }
+
+/**
+ * Characters the board can display, in strip order.
+ *
+ * Deliberately just enough: counts, money, and a duration. Anything the board
+ * cannot spell is something it has no business showing.
+ */
+export const GLYPHS = '0123456789.,$s/-';
+const GLYPH_CELL = 128;
+
+/** Sub-region of the glyph strip for one character, or null if unsupported. */
+export function glyphRegion(ch: string): Region | null {
+  const i = GLYPHS.indexOf(ch);
+  if (i < 0) return null;
+  const [sx, sy] = CELLS.glyphs;
+  const inset = 0.5;
+  return {
+    u0: (sx + i * GLYPH_CELL + inset) / ATLAS_SIZE,
+    v0: (sy + inset) / ATLAS_SIZE,
+    u1: (sx + (i + 1) * GLYPH_CELL - inset) / ATLAS_SIZE,
+    v1: (sy + GLYPH_CELL - inset) / ATLAS_SIZE,
+  };
+}
+
+/**
+ * Where each readout sits on the board, in atlas pixels from its centre.
+ *
+ * Shared with the renderer so the numbers land inside the panels the art has
+ * already drawn for them — the two would drift apart if each guessed.
+ */
+export const BOARD_FIELDS = {
+  shipped: { x: -690, y: 34, size: 104 },
+  revenue: { x: 40, y: 34, size: 84 },
+  average: { x: 730, y: 34, size: 84 },
+} as const;
+/** Atlas-pixel width of the board, so the renderer can work out its scale. */
+export const BOARD_ART_WIDTH = 2048;
+export const BOARD_ART_HEIGHT = 192;
 
 export function buildAtlas(seed: number): HTMLCanvasElement {
   const rng = makeRng(seed ^ 0x4a71);
@@ -138,6 +194,11 @@ export function buildAtlas(seed: number): HTMLCanvasElement {
   drawTrailerDoor(ctx);
   drawCrateVariants(ctx, seed);
   drawCrateOutline(ctx);
+  drawGlyphs(ctx);
+  drawQuotaBoard(ctx);
+  drawDockPlate(ctx, makeRng(seed ^ 0x71c3));
+  drawPlateWire(ctx);
+  drawWarnLamp(ctx);
   drawCone(ctx);
   drawRing(ctx);
   drawDot(ctx);
@@ -1070,5 +1131,248 @@ function drawCrateOutline(ctx: CanvasRenderingContext2D): void {
     }
   }
   ctx.stroke();
+  ctx.restore();
+}
+
+/**
+ * Dispatch plate: a sprung steel pad, hazard-striped so it reads as a control
+ * rather than a patch of floor. Worn through in the middle where it gets stood
+ * on, which is the only hint anyone needs about what to do with it.
+ */
+function drawDockPlate(ctx: CanvasRenderingContext2D, rng: ReturnType<typeof makeRng>): void {
+  const { size } = cell(ctx, 'dockPlate');
+  const half = size * 0.46;
+  const w = half * 2;
+
+  // Recessed housing under the pad.
+  ctx.fillStyle = '#1a1d20';
+  ctx.beginPath();
+  ctx.roundRect(-half - 7, -half - 7, w + 14, w + 14, 8);
+  ctx.fill();
+
+  // Hazard border: diagonal stripes clipped to a ring around the pad.
+  ctx.save();
+  ctx.beginPath();
+  ctx.roundRect(-half, -half, w, w, 6);
+  ctx.clip();
+  ctx.fillStyle = '#c8a12a';
+  ctx.fillRect(-half, -half, w, w);
+  ctx.fillStyle = '#20232a';
+  ctx.lineWidth = 0;
+  const pitch = size * 0.115;
+  for (let d = -w; d < w * 2; d += pitch * 2) {
+    ctx.beginPath();
+    ctx.moveTo(-half + d, -half);
+    ctx.lineTo(-half + d + pitch, -half);
+    ctx.lineTo(-half + d + pitch - w, half);
+    ctx.lineTo(-half + d - w, half);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // The tread plate itself, inset so the stripes read as a surround.
+  const inner = half * 0.72;
+  ctx.fillStyle = '#4a5158';
+  ctx.beginPath();
+  ctx.roundRect(-inner, -inner, inner * 2, inner * 2, 5);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  for (let i = -6; i <= 6; i++) {
+    const o = i * (inner / 3.6);
+    ctx.moveTo(-inner, o);
+    ctx.lineTo(inner, o + inner * 0.5);
+  }
+  ctx.stroke();
+
+  // Polished centre — the part boots and tracks actually land on.
+  const shine = ctx.createRadialGradient(0, 0, 0, 0, 0, inner);
+  shine.addColorStop(0, 'rgba(190,200,210,0.30)');
+  shine.addColorStop(0.6, 'rgba(150,160,170,0.10)');
+  shine.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = shine;
+  ctx.fillRect(-inner, -inner, inner * 2, inner * 2);
+
+  ctx.fillStyle = '#23262b';
+  for (const sx of [-1, 1]) {
+    for (const sy of [-1, 1]) {
+      ctx.beginPath();
+      ctx.arc(sx * (half - 9), sy * (half - 9), 6, 0, TAU);
+      ctx.fill();
+    }
+  }
+
+  for (let i = 0; i < 26; i++) {
+    ctx.globalAlpha = rng.range(0.05, 0.20);
+    ctx.fillStyle = rng.chance(0.6) ? '#191b1e' : '#6d4a24';
+    ctx.beginPath();
+    ctx.ellipse(rng.range(-half, half), rng.range(-half, half),
+      rng.range(3, 12), rng.range(2, 9), rng.range(0, TAU), 0, TAU);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+/** Armoured cable. Spans the cell edge to edge so runs can be laid end to end. */
+function drawPlateWire(ctx: CanvasRenderingContext2D): void {
+  const { size } = cell(ctx, 'plateWire');
+  const half = size / 2;
+  const t = size * 0.115;
+  ctx.fillStyle = '#15171a';
+  ctx.fillRect(-half, -t / 2, size, t);
+  ctx.fillStyle = 'rgba(120,130,140,0.22)';
+  ctx.fillRect(-half, -t / 2, size, t * 0.28);
+  // Banding, so a long run does not read as a plain drawn line.
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  for (let x = -half; x < half; x += size * 0.1) {
+    ctx.fillRect(x, -t / 2, size * 0.022, t);
+  }
+  ctx.restore();
+}
+
+/** Warning beacon: dark housing for the albedo pass. */
+function drawWarnLamp(ctx: CanvasRenderingContext2D): void {
+  const { size } = cell(ctx, 'warnLamp');
+  const r = size * 0.30;
+  ctx.fillStyle = '#202429';
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 1.32, 0, TAU);
+  ctx.fill();
+  ctx.fillStyle = '#3a1418';
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, TAU);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 1.32, 0, TAU);
+  ctx.stroke();
+  // Cage bars, so it reads as industrial rather than a button.
+  ctx.strokeStyle = 'rgba(20,22,25,0.85)';
+  ctx.lineWidth = 6;
+  ctx.beginPath();
+  for (let i = 0; i < 3; i++) {
+    const a = (i / 3) * Math.PI;
+    ctx.moveTo(Math.cos(a) * r, Math.sin(a) * r);
+    ctx.lineTo(-Math.cos(a) * r, -Math.sin(a) * r);
+  }
+  ctx.stroke();
+  ctx.restore();
+
+  const g = cell(ctx, 'warnGlow');
+  const gr = g.size * 0.30;
+  const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, gr * 2.4);
+  grad.addColorStop(0, 'rgba(255,255,255,1)');
+  grad.addColorStop(0.22, 'rgba(255,120,110,0.95)');
+  grad.addColorStop(0.5, 'rgba(255,40,40,0.34)');
+  grad.addColorStop(1, 'rgba(255,20,20,0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(-gr * 2.4, -gr * 2.4, gr * 4.8, gr * 4.8);
+  ctx.restore();
+}
+
+/** The board's character set, baked once at cell resolution. */
+function drawGlyphs(ctx: CanvasRenderingContext2D): void {
+  const c = cell(ctx, 'glyphs');
+  ctx.translate(-c.w / 2, -c.h / 2);
+  ctx.fillStyle = '#ffffff';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  // Tabular figures: the numbers change every few seconds and a proportional
+  // face would make the whole readout jitter sideways as they do.
+  ctx.font = '700 96px ui-monospace, "SF Mono", Menlo, Consolas, monospace';
+  for (let i = 0; i < GLYPHS.length; i++) {
+    ctx.fillText(GLYPHS[i], i * GLYPH_CELL + GLYPH_CELL / 2, GLYPH_CELL / 2 + 4);
+  }
+  ctx.restore();
+}
+
+/** Panel boundaries in atlas pixels from the board's centre. */
+const BOARD_SPLITS = [-330, 390];
+
+/**
+ * Productivity board. Housing in one cell, lit face in another, so the numbers
+ * and their labels stay readable after dark while the bezel goes properly black
+ * like everything else in the hall.
+ */
+function drawQuotaBoard(ctx: CanvasRenderingContext2D): void {
+  const chrome = cell(ctx, 'quotaBoard');
+  const hw = chrome.w / 2;
+  const hh = chrome.h / 2;
+
+  ctx.fillStyle = '#191c20';
+  ctx.beginPath();
+  ctx.roundRect(-hw + 2, -hh + 2, chrome.w - 4, chrome.h - 4, 10);
+  ctx.fill();
+  ctx.strokeStyle = '#0d0f11';
+  ctx.lineWidth = 6;
+  ctx.stroke();
+  // Top and bottom rails catch the light; the face is recessed between them.
+  ctx.fillStyle = '#2b3037';
+  ctx.fillRect(-hw + 6, -hh + 6, chrome.w - 12, 13);
+  ctx.fillStyle = '#101316';
+  ctx.fillRect(-hw + 6, hh - 17, chrome.w - 12, 11);
+  ctx.fillStyle = '#0a0c0e';
+  ctx.beginPath();
+  ctx.roundRect(-hw + 20, -hh + 24, chrome.w - 40, chrome.h - 46, 5);
+  ctx.fill();
+
+  ctx.fillStyle = '#33383f';
+  for (const sx of [-1, 1]) {
+    for (const sy of [-1, 1]) {
+      ctx.beginPath();
+      ctx.arc(sx * (hw - 11), sy * (hh - 11), 5, 0, TAU);
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+
+  const face = cell(ctx, 'quotaScreen');
+  const fw = face.w / 2;
+  const fh = face.h / 2;
+  // Screen wash: barely there, but it is what stops the panel reading as a
+  // painted sign rather than something switched on.
+  const wash = ctx.createLinearGradient(0, -fh, 0, fh);
+  wash.addColorStop(0, 'rgba(70,150,130,0.20)');
+  wash.addColorStop(0.5, 'rgba(50,120,110,0.11)');
+  wash.addColorStop(1, 'rgba(24,60,58,0.16)');
+  ctx.fillStyle = wash;
+  ctx.beginPath();
+  ctx.roundRect(-fw + 20, -fh + 24, face.w - 40, face.h - 46, 5);
+  ctx.fill();
+
+  ctx.fillStyle = 'rgba(0,0,0,0.30)';
+  for (let y = -fh + 26; y < fh - 24; y += 5) {
+    ctx.fillRect(-fw + 20, y, face.w - 40, 2);
+  }
+
+  ctx.strokeStyle = 'rgba(120,220,200,0.30)';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  for (const x of BOARD_SPLITS) {
+    ctx.moveTo(x, -fh + 40);
+    ctx.lineTo(x, fh - 40);
+  }
+  ctx.stroke();
+
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'center';
+  ctx.font = '600 40px ui-monospace, "SF Mono", Menlo, Consolas, monospace';
+  ctx.fillStyle = 'rgba(150,240,215,0.72)';
+  const label = (text: string, x: number): void => {
+    // Letter-spaced by hand; the canvas API has no tracking control and a
+    // run-on label at this size reads as a smudge.
+    const spacing = 25;
+    const total = (text.length - 1) * spacing;
+    for (let i = 0; i < text.length; i++) {
+      ctx.fillText(text[i], x - total / 2 + i * spacing, -fh + 52);
+    }
+  };
+  label('SHIPPED / QUOTA', BOARD_FIELDS.shipped.x);
+  label('REVENUE', BOARD_FIELDS.revenue.x);
+  label('AVG PER CRATE', BOARD_FIELDS.average.x);
   ctx.restore();
 }

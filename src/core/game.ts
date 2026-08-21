@@ -2,18 +2,28 @@ import { Camera } from './camera';
 import { DayClock } from './dayCycle';
 import { Input } from './input';
 import { defaultSettings, type Settings } from './settings';
-import { EntityRenderer } from '../render/entities';
+import { EntityRenderer, type PlanMark } from '../render/entities';
 import { Renderer } from '../render/renderer';
-import { BOT_LENGTH, BOT_RADIUS, BotPool, BotTask } from '../sim/bots';
-import { buildLevelGeometry, SPAWN, type LevelGeometry } from '../sim/level';
+import { BOT_LENGTH, BOT_RADIUS, BotPool, BotTask, OrderKind } from '../sim/bots';
+import {
+  buildLevelGeometry, PLATE_TRIGGER, SPAWN, type LevelGeometry, type Prop,
+} from '../sim/level';
+import { Ledger } from '../sim/economy';
 import { NavGrid } from '../sim/navGrid';
-import { TrailerFleet } from '../sim/trailers';
+import { SLOT_COUNT, TrailerFleet, type Trailer } from '../sim/trailers';
 import { canLift, type CrateMaterialValue, type CrateShapeValue, type HaulerClassValue } from '../sim/cargo';
 
 const EDGE_PAN_MARGIN = 58;
 const PAN_SPEED = 1750;
 /** Slack around a click when picking a single robot. */
 const CLICK_PICK_RADIUS = 110;
+/**
+ * Ceiling on how many plan marks are built in a frame.
+ *
+ * Select a thousand machines and the marks stop being a readout and start being
+ * confetti, so there is no point paying to build them all.
+ */
+const MAX_PLAN_MARKS = 40;
 
 export interface Stats {
   fps: number;
@@ -39,6 +49,9 @@ export class Game {
   readonly stats: Stats = {
     fps: 60, frameMs: 0, simMs: 0, drawMs: 0, sprites: 0, bots: 0, selected: 0,
   };
+
+  /** Shift figures, shown on the board on the north wall. */
+  readonly ledger = new Ledger();
 
   /** Where the drop ghost currently sits, so a right click can find it. */
   dropGhost: { x: number; y: number } | null = null;
@@ -205,17 +218,9 @@ export class Game {
         this.entities.drawGlow(batch, bounds, lighting, time);
         this.entities.drawTrails(batch, bounds, time, this.settings);
       },
-      drawMarks: (batch, bounds, pass) => {
-        this.entities.drawOrderMarks(batch, bounds, this.level.props, time);
-        // Only offer a drop mark when something is actually on a deck.
-        const load = this.markedLoad();
-        this.dropGhost =
-          load === null
-            ? null
-            : pass.collectDropGhost(
-                batch, this.trailers, bounds, load.material, load.shape,
-                0.5 + 0.5 * Math.sin(time * 3.2),
-              );
+      ledger: this.ledger,
+      drawMarks: (batch, bounds) => {
+        this.entities.drawPlanMarks(batch, bounds, this.buildPlan(), time);
       },
       drawOverlay: (batch, bounds) => this.entities.drawSelection(batch, bounds, time),
     });
@@ -225,6 +230,7 @@ export class Game {
     this.clock.paused = this.settings.timePaused;
     this.clock.dayLengthSeconds = this.settings.dayLengthSeconds;
     this.clock.advance(dt * this.settings.simSpeed);
+    this.ledger.syncDay(this.clock.day, this.elapsed);
 
     // Trailers coming and going change which bays can be driven into. Only the
     // bay strip is re-rasterised: a full rebuild here cost a four-frame hitch
@@ -232,7 +238,9 @@ export class Game {
     const hours = this.settings.timePaused
       ? 0
       : ((dt * this.settings.simSpeed) / this.clock.dayLengthSeconds) * 24;
-    if (this.trailers.update(dt * this.settings.simSpeed, hours, this.robotAtBay)) {
+    if (this.trailers.update(
+      dt * this.settings.simSpeed, hours, this.robotAtBay, this.plateHeld,
+    )) {
       this.nav.rebuildBayCorridors(this.level.bays, this.trailerCargoBlocks());
     }
 
@@ -359,6 +367,18 @@ export class Game {
     return false;
   };
 
+  /** Whether a robot is standing on the dispatch plate for a bay. */
+  private plateHeld = (bayX: number): boolean => {
+    const plate = this.level.plates.find((p) => p.bayX === bayX);
+    if (!plate) return false;
+    for (let i = 0; i < this.bots.count; i++) {
+      const dx = this.bots.x[i] - plate.x;
+      const dy = this.bots.y[i] - plate.y;
+      if (dx * dx + dy * dy < PLATE_TRIGGER * PLATE_TRIGGER) return true;
+    }
+    return false;
+  };
+
   /** Loaded crates, as circles the nav grid can treat as obstacles. */
   private trailerCargoBlocks(): Array<{ x: number; y: number; r: number }> {
     const out: Array<{ x: number; y: number; r: number }> = [];
@@ -381,37 +401,121 @@ export class Game {
       material: material as CrateMaterialValue,
       shape: shape as CrateShapeValue,
     };
+    this.ledger.record(
+      material as CrateMaterialValue, shape as CrateShapeValue, this.elapsed,
+    );
     // The crate is an obstacle from now on.
     this.nav.rebuildBayCorridors(this.level.bays, this.trailerCargoBlocks());
   };
+
+  /**
+   * Everything the selected robots are lined up to do, as marks to draw.
+   *
+   * This walks each robot's active task and then its queue, tracking what will
+   * be on its deck at every step and which trailer slot each delivery will land
+   * in. Without the walk you can see the crate being collected now but nothing
+   * about the three behind it, which is exactly the part that was invisible.
+   *
+   * It also drags each queued order's displayed target up to date, so the
+   * dotted queue line ends where the crate will actually go rather than at
+   * whichever slot happened to be free when the order was given.
+   */
+  private buildPlan(): PlanMark[] {
+    const marks: PlanMark[] = [];
+    const trailer = this.trailers.trailers.find((t) => TrailerFleet.isDockable(t));
+    let slot = trailer ? TrailerFleet.nextFreeSlot(trailer) : -1;
+
+    // What a robot is still holding once its whole plan has run. That is the
+    // only thing a NEW delivery order could be about.
+    let unassigned: { material: CrateMaterialValue; shape: CrateShapeValue } | null = null;
+
+    for (let i = 0; i < this.bots.count && marks.length < MAX_PLAN_MARKS; i++) {
+      if (!this.bots.selected[i]) continue;
+      let depth = 0;
+      let load: { material: CrateMaterialValue; shape: CrateShapeValue } | null =
+        this.bots.carryMaterial[i] >= 0
+          ? {
+              material: this.bots.carryMaterial[i] as CrateMaterialValue,
+              shape: this.bots.carryShape[i] as CrateShapeValue,
+            }
+          : null;
+
+      const pick = (prop: Prop): void => {
+        marks.push({
+          x: prop.x, y: prop.y, angle: prop.angle,
+          material: prop.material, shape: prop.shape, drop: false, depth,
+        });
+        load = { material: prop.material, shape: prop.shape };
+        depth++;
+      };
+      /** Books the next free slot and marks it. Returns where it landed. */
+      const place = (): { x: number; y: number } | null => {
+        if (!trailer || !load || slot < 0 || slot >= SLOT_COUNT) return null;
+        const pos = TrailerFleet.slotPosition(trailer, slot);
+        marks.push({
+          x: pos.x, y: pos.y, angle: 0,
+          material: load.material, shape: load.shape, drop: true, depth,
+        });
+        slot++;
+        load = null;
+        depth++;
+        return pos;
+      };
+
+      // The step in progress comes first — it is what depth 0 means.
+      if (this.bots.task[i] === BotTask.Fetch && this.bots.targetProp[i] >= 0) {
+        const prop = this.level.props[this.bots.targetProp[i]];
+        if (prop) pick(prop);
+      } else if (this.bots.task[i] === BotTask.Deliver) {
+        place();
+      }
+
+      for (const order of this.bots.queueOf(i) ?? []) {
+        if (order.kind === OrderKind.Fetch && order.prop) {
+          pick(order.prop);
+          order.x = order.prop.x;
+          order.y = order.prop.y;
+        } else if (order.kind === OrderKind.Deliver) {
+          const pos = place();
+          if (pos) {
+            order.x = pos.x;
+            order.y = pos.y;
+          }
+        } else {
+          depth++;
+        }
+      }
+      if (load) unassigned = load;
+    }
+
+    // Where a NEW delivery order would land. Only offered when something will
+    // actually be left on a deck — with every load already spoken for, an extra
+    // mark just reads as a fifth delivery nobody asked for.
+    this.dropGhost = this.pendingDrop(trailer, slot, marks, unassigned);
+    return marks;
+  }
+
+  /** The mark a fresh delivery order would use, if one makes sense right now. */
+  private pendingDrop(
+    trailer: Trailer | undefined,
+    slot: number,
+    marks: PlanMark[],
+    load: { material: CrateMaterialValue; shape: CrateShapeValue } | null,
+  ): { x: number; y: number } | null {
+    if (!trailer || !load || slot < 0 || slot >= SLOT_COUNT) return null;
+    const pos = TrailerFleet.slotPosition(trailer, slot);
+    marks.push({
+      x: pos.x, y: pos.y, angle: 0,
+      material: load.material, shape: load.shape, drop: true,
+      depth: marks.length,
+    });
+    return pos;
+  }
 
   /** A selected robot with something on its deck, if there is one. */
   private carryingSelection(): number | null {
     for (let i = 0; i < this.bots.count; i++) {
       if (this.bots.selected[i] && this.bots.carryMaterial[i] >= 0) return i;
-    }
-    return null;
-  }
-
-  /**
-   * What the drop mark should be showing, if anything.
-   *
-   * A robot on its way to collect something counts as well as one already
-   * loaded: the mark is what the player clicks to queue the delivery behind the
-   * fetch, so it has to be on screen before the crate reaches the deck.
-   */
-  private markedLoad(): { material: CrateMaterialValue; shape: CrateShapeValue } | null {
-    const carrying = this.carryingSelection();
-    if (carrying !== null) {
-      return {
-        material: this.bots.carryMaterial[carrying] as CrateMaterialValue,
-        shape: this.bots.carryShape[carrying] as CrateShapeValue,
-      };
-    }
-    for (let i = 0; i < this.bots.count; i++) {
-      if (!this.bots.selected[i] || this.bots.task[i] !== BotTask.Fetch) continue;
-      const prop = this.level.props[this.bots.targetProp[i]];
-      if (prop) return { material: prop.material, shape: prop.shape };
     }
     return null;
   }

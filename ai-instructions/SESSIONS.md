@@ -94,3 +94,46 @@ clear, and returns empty.
 Not done: nothing was cut from this session's scope. Open items are in
 FUTURE_IDEAS.md — the other three hauler classes, the other three bays, and
 anything to do with what the trailer does with the cargo once it drives off.
+
+---
+
+## 2026-08-21 — Claude Code (Opus 5) — readability and the dock floor
+
+Six pieces of feedback, all landed.
+
+**Queue visualisation.** `Game.buildPlan()` projects each selected robot's whole
+plan — active task plus queue — into a list of `PlanMark`s, booking trailer slots
+forward so every future drop is marked in the slot it will actually use. Drawn
+brightness-ranked by queue depth. `EntityRenderer.drawPlanMarks()` replaced both
+`drawOrderMarks` and `LightingPass.collectDropGhost`; all marks now live in one
+place, in the overlay pass. Queued legs also dog-leg at the slab edge so they
+stop cutting through the north wall, and their dots are roughly twice as heavy.
+
+**Free crate angles.** `buildProps` no longer quarter-turns. `Prop.w/h` is the
+crate's own-frame footprint. The three call sites that used it were checked; two
+needed nothing, one (the contact shadow) was double-rotating and is fixed.
+
+**Dispatch plates.** One per bay — including shuttered ones, which read as
+stations waiting to open. Hazard-striped sprung pad, armoured cable running to
+the bay's right door post, caged beacon there that flashes red. Holding a robot
+on it for `PLATE_DWELL` sends the trailer away however little is aboard. The
+robot-inside interlock still applies, and the plate sits well clear of the mouth
+so using it is never the thing that traps you.
+
+**Rolling waypoints.** A queued plain-move leg no longer brakes to a halt at each
+point. Grabs still stop dead.
+
+**Quota board.** `src/render/board.ts` plus `src/sim/economy.ts`. On the north
+wall at x 2600: shipped/quota, revenue, average seconds per crate. Housing in the
+albedo pass, lit face and numbers in the emissive pass, so it reads at midnight
+and at noon. Shipped goes amber until quota is met, then green — the only "you
+are behind" the game says. Numbers come from a baked glyph strip, one texture.
+
+**No text UI.** The refusal toast is deleted, `src/ui/toast.ts` with it.
+
+Measured after: 3000 robots all selected with plan marks building every frame,
+sim 3.12 ms, draw 1.59 ms. Plan marks capped at 40 so a thousand-robot selection
+does not turn the readout into confetti.
+
+Not done: nothing was cut. Refused orders are now silent by design — see
+WORKING_NOTES "No explanatory UI, ever" before adding any feedback for them.

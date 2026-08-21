@@ -1,10 +1,12 @@
 import type { LightingState } from '../core/dayCycle';
 import type { Settings } from '../core/settings';
-import { FLOOR, TRAILER_DEPTH, TRAILER_WIDTH, type LevelGeometry } from '../sim/level';
+import {
+  FLOOR, SHELL, TRAILER_DEPTH, TRAILER_WIDTH, WALL_THICKNESS, type LevelGeometry,
+} from '../sim/level';
 import { TrailerFleet } from '../sim/trailers';
 import { REGIONS } from './atlas';
-import { crateQuad, crateRegion, outlineQuad } from './crateArt';
-import { shapeSize, type CrateMaterialValue, type CrateShapeValue } from '../sim/cargo';
+import { crateQuad, crateRegion } from './crateArt';
+import { shapeSize } from '../sim/cargo';
 import type { SpriteBatch } from './spriteBatch';
 
 /** Sodium vapour work lamps. */
@@ -62,6 +64,20 @@ export function pushCastShadow(
  * daylight cuts a dark streak through the pool, rather than the pool simply
  * winning.
  */
+/** Cable thickness on the floor. Thin enough to read as conduit, not a stripe. */
+const PLATE_WIRE_WIDTH = 26;
+const BEACON_SIZE = 150;
+
+/**
+ * Beacon flash: a hard on-off with a short tail, not a sine.
+ *
+ * A smooth pulse reads as a decorative glow. Warning beacons snap.
+ */
+function beaconFlash(time: number): number {
+  const phase = (time * 1.35) % 1;
+  return phase < 0.42 ? 1 : Math.max(0, 1 - (phase - 0.42) / 0.16);
+}
+
 export class LightingPass {
   constructor(private readonly level: LevelGeometry) {}
 
@@ -243,6 +259,86 @@ export class LightingPass {
     }
   }
 
+  /**
+   * Dispatch plates and their cable runs, into the albedo pass.
+   *
+   * The cable is the whole reason a plate is legible: on its own a steel pad
+   * beside a bay is just floor furniture, but a line running from it to one
+   * particular door post says which trailer it belongs to without a caption.
+   */
+  collectPlates(batch: SpriteBatch, fleet: TrailerFleet, bounds: Bounds): void {
+    for (const plate of this.level.plates) {
+      if (!visible(bounds, plate.x, plate.y, plate.size * 3)) continue;
+      const trailer = fleet.trailers.find((t) => t.bay.x === plate.bayX);
+
+      // Cable: north out of the plate into the wall band, then west along it to
+      // the door post. Two runs, drawn as one long sprite each.
+      const runY = SHELL.y0 + WALL_THICKNESS * 0.62;
+      const upLength = plate.y - runY;
+      batch.pushRegion(
+        REGIONS.plateWire, plate.x, (plate.y + runY) / 2, Math.PI / 2,
+        upLength, PLATE_WIRE_WIDTH, 1, 1, 1, 1,
+      );
+      const acrossLength = Math.abs(plate.x - plate.wireX);
+      batch.pushRegion(
+        REGIONS.plateWire, (plate.x + plate.wireX) / 2, runY, 0,
+        acrossLength + PLATE_WIRE_WIDTH, PLATE_WIRE_WIDTH, 1, 1, 1, 1,
+      );
+
+      // The pad sinks and darkens under a robot, which is the only feedback
+      // needed that it has registered.
+      const press = trailer ? Math.min(1, trailer.dispatch / 0.35) : 0;
+      const scale = 1 - press * 0.045;
+      const shade = 1 - press * 0.22;
+      batch.pushRegion(
+        REGIONS.dockPlate, plate.x, plate.y, 0,
+        plate.size * scale, plate.size * scale, shade, shade, shade, 1,
+      );
+
+      // Beacon, on the wall at the door post the cable runs to.
+      batch.pushRegion(
+        REGIONS.warnLamp, plate.wireX, runY, 0,
+        BEACON_SIZE, BEACON_SIZE, 1, 1, 1, 1,
+      );
+    }
+  }
+
+  /** The beacon's own light, thrown across the bay mouth while it is on. */
+  collectPlateLights(
+    batch: SpriteBatch, fleet: TrailerFleet, bounds: Bounds, time: number, settings: Settings,
+  ): void {
+    if (!settings.lighting) return;
+    for (const plate of this.level.plates) {
+      const trailer = fleet.trailers.find((t) => t.bay.x === plate.bayX);
+      if (!trailer || trailer.alarm < 0.02) continue;
+      const runY = SHELL.y0 + WALL_THICKNESS * 0.62;
+      if (!visible(bounds, plate.wireX, runY, 1400)) continue;
+      const flash = trailer.alarm * beaconFlash(time);
+      batch.pushRegion(
+        REGIONS.radial, plate.wireX, runY + 180, 0, 1900, 1900,
+        1.0, 0.16, 0.12, flash * 0.55,
+      );
+    }
+  }
+
+  /** The lens itself, into the emissive pass so it survives daylight. */
+  collectPlateGlow(
+    batch: SpriteBatch, fleet: TrailerFleet, bounds: Bounds, time: number,
+  ): void {
+    for (const plate of this.level.plates) {
+      const trailer = fleet.trailers.find((t) => t.bay.x === plate.bayX);
+      if (!trailer || trailer.alarm < 0.02) continue;
+      const runY = SHELL.y0 + WALL_THICKNESS * 0.62;
+      if (!visible(bounds, plate.wireX, runY, 700)) continue;
+      const flash = trailer.alarm * beaconFlash(time);
+      const size = BEACON_SIZE * (2.1 + flash * 0.7);
+      batch.pushRegion(
+        REGIONS.warnGlow, plate.wireX, runY, 0, size, size,
+        1, 1, 1, 0.25 + flash * 0.75,
+      );
+    }
+  }
+
   /** Crates on the floor, into the albedo pass. */
   collectProps(batch: SpriteBatch, bounds: Bounds, settings: Settings): void {
     if (!settings.props) return;
@@ -283,43 +379,6 @@ export class LightingPass {
     }
   }
 
-  /**
-   * The ghosted mark showing where the load on a robot's deck should go.
-   *
-   * Only drawn while something is actually being carried — it is the target of
-   * the next right click, so it should not be on screen when there is nothing
-   * to put there.
-   */
-  collectDropGhost(
-    batch: SpriteBatch,
-    fleet: TrailerFleet,
-    bounds: Bounds,
-    material: CrateMaterialValue,
-    shape: CrateShapeValue,
-    pulse: number,
-  ): { x: number; y: number } | null {
-    for (const t of fleet.trailers) {
-      if (!TrailerFleet.isDockable(t)) continue;
-      const slot = TrailerFleet.nextFreeSlot(t);
-      if (slot < 0) continue;
-      const pos = TrailerFleet.slotPosition(t, slot);
-      if (!visible(bounds, pos.x, pos.y, 400)) return pos;
-
-      const q = crateQuad(shape);
-      batch.pushRegion(
-        crateRegion(material, shape), pos.x, pos.y, 0, q.w, q.h,
-        0.42, 0.86, 1.0, 0.18 + pulse * 0.10,
-      );
-      const o = outlineQuad(shape);
-      batch.pushRegion(
-        REGIONS.crateOutline, pos.x, pos.y, 0, o.w, o.h,
-        0.45, 0.89, 1.0, 0.65 + pulse * 0.35,
-      );
-      return pos;
-    }
-    return null;
-  }
-
   /** Shadows the cargo throws, laid onto the floor. */
   collectPropShadows(
     batch: SpriteBatch,
@@ -340,13 +399,9 @@ export class LightingPass {
       pushCastShadow(
         batch, prop.x, prop.y, footprint * 0.95, angle, length * 0.55, 0.48 * directional,
       );
-      // prop.w/h are the WORLD-axis footprint, already turned. Passing them
-      // together with prop.angle rotated the shadow a second time, so a long
-      // crate cast its shadow across itself.
-      const canon = shapeSize(prop.shape);
       batch.pushRegion(
         REGIONS.hardShadow, prop.x, prop.y, prop.angle,
-        canon.w * 1.05, canon.h * 1.05, 0, 0, 0, 0.5,
+        prop.w * 1.05, prop.h * 1.05, 0, 0, 0, 0.5,
       );
     }
   }

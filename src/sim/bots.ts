@@ -347,6 +347,12 @@ export class BotPool {
     this.queues.delete(index);
   }
 
+  /** What the queue will do next, or -1 when there is nothing behind this. */
+  private nextQueuedKind(index: number): OrderKindValue | -1 {
+    const queue = this.queues.get(index);
+    return queue && queue.length > 0 ? queue[0].kind : -1;
+  }
+
   private pushOrder(index: number, order: QueuedOrder): void {
     let queue = this.queues.get(index);
     if (!queue) {
@@ -831,10 +837,14 @@ export class BotPool {
     let wx = pts[path.cursor];
     let wy = pts[path.cursor + 1];
     const isLast = path.cursor >= pts.length - 2;
+    // A leg with another plain move stacked behind it is not really an arrival:
+    // braking to a halt at every queued waypoint made a long route feel jerky.
+    // Anything that ends in a grab still has to stop dead and square up.
+    const rolling = isLast && this.nextQueuedKind(i) === OrderKind.Move;
 
     // Advance through waypoints we have effectively reached. Intermediate ones
     // get a generous radius so corners are rounded rather than pivoted on.
-    const arrive = isLast ? 14 : 90;
+    const arrive = isLast ? (rolling ? 70 : 14) : 90;
     let dx = wx - this.x[i];
     let dy = wy - this.y[i];
     let dist = Math.hypot(dx, dy);
@@ -850,9 +860,10 @@ export class BotPool {
       if (path.cursor >= pts.length - 2) break;
     }
 
-    if (path.cursor >= pts.length - 2 && dist < 14) {
+    if (path.cursor >= pts.length - 2 && dist < arrive) {
       this.paths.delete(i);
-      this.velocity[i] = 0;
+      // Rolling handovers keep their momentum; everything else stops.
+      if (!rolling) this.velocity[i] = 0;
       // A fetch or a delivery still has its grab to play out. The queue waits
       // for that; taking the next order here abandoned the crate on arrival.
       this.state[i] = BotState.Idle;
@@ -870,7 +881,9 @@ export class BotPool {
     // Slow into turns, and brake into the final waypoint on a real curve so a
     // short move is still driven briskly rather than crept.
     const alignment = Math.max(0, 1 - Math.abs(delta) / 1.9);
-    const brake = isLast ? Math.sqrt(2 * DECEL * Math.max(0, dist - 6)) : Infinity;
+    const brake = isLast && !rolling
+      ? Math.sqrt(2 * DECEL * Math.max(0, dist - 6))
+      : Infinity;
     const target = Math.min(this.speed[i] * alignment, brake);
     this.velocity[i] += (target - this.velocity[i]) * Math.min(1, dt * ACCEL_RESPONSE);
 

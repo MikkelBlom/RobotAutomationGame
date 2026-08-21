@@ -270,3 +270,49 @@ object.
 **No text UI.** Refused orders fail silently — a toast was tried and rejected.
 The feedback has to be in the world (the amber bracket, the cyan drop mark) or
 not at all.
+
+## Readability pass (2026-08-21, later)
+
+**No explanatory UI, ever.** Mikkel's rule, stated plainly: *"I dont really like
+games and UI that explain the purpose. I want to show not tell."* The toast that
+narrated refusals is gone and nothing replaced it. Everything the player needs to
+know is an object in the world — the amber bracket on a crate, the cyan mark in a
+slot, the cable from a plate to a door, the board on the wall. If a future
+feature seems to need a caption, the feature is wrong, not the rule.
+
+**A queue nobody can read is not a queue.** Marking only the crate being fetched
+right now told the player nothing about the three behind it. `Game.buildPlan()`
+walks each selected robot's active task and then its order queue, tracking what
+will be on the deck at every step and booking trailer slots forward, so the whole
+job is on screen at once. Rank by brightness: depth 0 breathes, everything behind
+it sits still and dimmer. That ordering IS the readout.
+
+**Straight queue lines still need a doorway.** A straight leg from a crate to a
+loading slot cuts through the north wall and out into the black, which reads as a
+bug rather than a shortcut. Legs crossing `FLOOR.y` now turn at the slab edge,
+both on the way in and on the way out — handling only one direction left every
+trailer-to-floor leg slicing across the wall.
+
+**Faint is not subtle.** The queued trail at `alpha 0.22` on 26 cm dots vanished
+at any zoom wide enough to see the whole job. Doubled the dot and the alpha.
+
+**Crates are not on a grid.** They used to be quarter-turned, which made the hall
+read as a lattice. They are free-angle now and nothing broke, because the
+approach code snaps to the nearest of the crate's OWN four faces — that works at
+any base angle. `Prop.w/h` is the footprint in the crate's own frame, never the
+world's; a world-axis box is meaningless at a free angle anyway.
+
+**Brake curves, not arrival ramps, part two.** Queued waypoints each braked to a
+halt before the next leg started. A leg with another plain MOVE behind it is now
+"rolling": no brake, wider arrival radius, momentum carried across. Anything
+ending in a grab still stops dead and squares up — that one has to be exact.
+
+**The board is one texture.** Numbers are composed from a baked 16-glyph strip in
+the main atlas rather than a live canvas texture, so the display costs no extra
+texture bind and no re-uploads. `BOARD_FIELDS` in `atlas.ts` is shared by the art
+and the renderer so the numbers land inside the panels drawn for them.
+
+**Dispatch needs a dwell.** Standing on the plate sends the trailer away however
+little is aboard, so merely driving across it on the way somewhere else would
+dispatch a half-loaded truck. `PLATE_DWELL` is 1.3s with the beacon flashing
+throughout: the hold is visible while it happens rather than a hidden timer.

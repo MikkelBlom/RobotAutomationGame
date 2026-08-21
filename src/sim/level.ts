@@ -178,6 +178,42 @@ export function buildDockBays(): DockBay[] {
   return bays;
 }
 
+/**
+ * The dispatch plate beside a loading bay.
+ *
+ * Standing a robot on it closes the trailer's doors and sends it away, whether
+ * or not it is full. It sits clear of the bay mouth so using it never means
+ * being inside the thing you are dispatching.
+ */
+export interface DockPlate {
+  x: number;
+  y: number;
+  /** Side of the square pad. */
+  size: number;
+  /** Which bay it dispatches, matched on the bay's centre x. */
+  bayX: number;
+  /** Where its cable meets the wall, so the link is visible on the floor. */
+  wireX: number;
+}
+
+/** Plate radius a robot has to be within for it to read as pressed. */
+export const PLATE_TRIGGER = 130;
+
+export function buildDockPlates(bays: DockBay[]): DockPlate[] {
+  // Every station gets one, in service or not. A shuttered bay with its own
+  // dead plate and cable reads as a station waiting to be opened; a bare wall
+  // reads as nothing at all.
+  return bays.map((b) => ({
+    // Just clear of the opening on the right-hand side, far enough off the
+    // wall that a robot standing on it is not in the trailer's way.
+    x: b.x + BAY_WIDTH / 2 + 210,
+    y: FLOOR.y + 330,
+    size: 260,
+    bayX: b.x,
+    wireX: b.x + TRAILER_WIDTH / 2,
+  }));
+}
+
 export interface Column {
   x: number;
   y: number;
@@ -207,14 +243,18 @@ export interface Prop {
   x: number;
   y: number;
   /**
-   * Crates sit square to the building. They used to be scattered at random
-   * angles, which made a robot's approach look crooked no matter how carefully
-   * it lined up — there was no straight-on face to line up with.
+   * Free rotation. Squaring them to the building made the whole hall read as a
+   * grid; a robot approaching one snaps to the nearest of ITS four faces, which
+   * works at any angle, so there is no reason to constrain them.
    */
   angle: number;
   material: CrateMaterialValue;
   shape: CrateShapeValue;
-  /** Footprint in centimetres. */
+  /**
+   * Footprint in centimetres, in the crate's OWN frame — not the world's. The
+   * approach code works in the crate's frame, and a world-axis box would be
+   * meaningless at a free angle anyway.
+   */
   w: number;
   h: number;
   /** Collision half-extent. Deliberately a little LARGER than the art. */
@@ -222,6 +262,7 @@ export interface Prop {
 }
 
 export interface LevelGeometry {
+  plates: DockPlate[];
   columns: Column[];
   lamps: Lamp[];
   skylights: Skylight[];
@@ -317,7 +358,8 @@ export function buildLevelGeometry(seed: number): LevelGeometry {
   }
 
   const props = buildProps(rng, columns, bays);
-  return { columns, lamps, skylights, props, bays };
+  const plates = buildDockPlates(bays);
+  return { columns, lamps, skylights, props, bays, plates };
 }
 
 /**
@@ -374,19 +416,13 @@ function buildProps(
           rng.chance(0.70) ? CrateMaterial.Timber : CrateMaterial.Steel;
 
         const { w, h } = shapeSize(shape);
-        // Square to the building, quarter-turned at random so long crates lie
-        // both ways. A crate at an arbitrary angle has no face to line up on.
-        const quarter = rng.int(0, 3);
-        const angle = (quarter * Math.PI) / 2;
+        // Dropped where they fell, at whatever angle. The robot snaps its
+        // approach to the nearest face, so nothing here needs to be square.
+        const angle = rng.range(0, Math.PI * 2);
         const radius = crateRadius(shape);
         if (!clearOf(x, y, radius)) continue;
 
-        props.push({
-          x, y, angle, material, shape,
-          w: quarter % 2 === 0 ? w : h,
-          h: quarter % 2 === 0 ? h : w,
-          radius,
-        });
+        props.push({ x, y, angle, material, shape, w, h, radius });
         break;
       }
     }
