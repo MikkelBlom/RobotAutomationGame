@@ -200,6 +200,19 @@ export class Renderer {
       applyBlend(gl, BlendMode.Normal);
     }
 
+    // Shadows are laid onto the FLOOR, before anything stands on it. Drawn
+    // into the light buffer instead, any part of a shadow that overlapped its
+    // own object darkened that object — and seen from directly above, an
+    // object's shadow always starts underneath it.
+    applyBlend(gl, BlendMode.Shadow);
+    this.shadowBatch.begin();
+    pass?.collectShadows(this.shadowBatch, ctx.lighting, bounds, ctx.settings);
+    pass?.collectPropShadows(this.shadowBatch, ctx.lighting, bounds, ctx.settings);
+    ctx.drawEntityShadows?.(this.shadowBatch, bounds);
+    sprites += this.shadowBatch.length;
+    this.shadowBatch.flush(view, this.atlasTexture);
+
+    applyBlend(gl, BlendMode.Normal);
     this.entityBatch.begin();
     pass?.collectColumns(this.entityBatch, bounds, ctx.settings);
     pass?.collectProps(this.entityBatch, bounds, ctx.settings);
@@ -225,16 +238,6 @@ export class Renderer {
     ctx.drawEntityLights?.(this.lightBatch, bounds);
     sprites += this.lightBatch.length;
     this.lightBatch.flush(view, this.atlasTexture);
-
-    // Occluders multiply down whatever light landed, so a column standing in a
-    // pool of daylight cuts a streak through it.
-    applyBlend(gl, BlendMode.Shadow);
-    this.shadowBatch.begin();
-    pass?.collectShadows(this.shadowBatch, ctx.lighting, bounds, ctx.settings);
-    pass?.collectPropShadows(this.shadowBatch, ctx.lighting, bounds, ctx.settings);
-    ctx.drawEntityShadows?.(this.shadowBatch, bounds);
-    sprites += this.shadowBatch.length;
-    this.shadowBatch.flush(view, this.atlasTexture);
 
     // ---------------------------------------------------------- 3. composite
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);

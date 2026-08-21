@@ -95,9 +95,9 @@ export class EntityRenderer {
       // hull. Centred it would just darken the robot itself.
       batch.pushRegion(
         REGIONS.hardShadow,
-        b.x[i] + dirX * BOT_LENGTH * 0.34, b.y[i] + dirY * BOT_LENGTH * 0.34, b.angle[i],
-        SPRITE_W * 0.82, SPRITE_H * 0.86,
-        0, 0, 0, 0.62,
+        b.x[i] + dirX * BOT_LENGTH * 0.30, b.y[i] + dirY * BOT_LENGTH * 0.30, b.angle[i],
+        SPRITE_W * 0.86, SPRITE_H * 0.90,
+        0, 0, 0, 0.55,
       );
     }
   }

@@ -105,20 +105,6 @@ uniform float uWaveStrength;
 uniform float uMouthX;      // where the channel meets open water
 
 /**
- * One directional wave, faded out once its wavelength approaches pixel size.
- * Everything it needs is passed in; GLSL ES has no closures.
- */
-float waveAt(
-  vec2 wp, float t, float texel,
-  vec2 dir, float lambda, float speed, float amp
-) {
-  float k = 6.2831853 / lambda;
-  return sin(dot(wp, dir) * k - t * speed)
-       * amp
-       * smoothstep(1.6, 4.5, lambda / texel);
-}
-
-/**
  * A swell rolling in from the mouth, returned as a SIGNED ridge: negative in
  * the trough ahead of it, positive on the crest behind. Feeding that into the
  * surface height gives a real moving ridge of light and shade. Returning a
@@ -151,37 +137,22 @@ void main() {
     texture(uNoise, vWorld * 0.00048 + vec2(t * 0.006, 0.0)).r,
     texture(uNoise, vWorld * 0.00048 + vec2(0.0, t * 0.005)).g
   ) - 0.5;
-  // Warp the LONG swell only. Applied to the short chop as well it curls the
-  // ripple lines into marbled smoke; ripple has to stay directional to read as
-  // a water surface at all.
-  vec2 wpLong = vWorld + warp * 190.0;
-  vec2 wpMid  = vWorld + warp * 60.0;
-  vec2 wpFine = vWorld + warp * 14.0;
-
-  // How much world a pixel covers right now. Ripples shorter than a few
-  // pixels are faded out rather than left to alias into a shimmering mess when
-  // the camera pulls back.
-  float texel = max(fwidth(vWorld.x), fwidth(vWorld.y));
+  vec2 wp = vWorld + warp * 170.0;
 
   // All directions have a positive x component and use "- t * w", so the chop
   // drifts INTO the hall rather than appearing to drain out of the mouth.
-  //
-  // Weighted towards SHORT wavelengths on purpose. Loaded towards long ones the
-  // surface has no detail at working zoom and reads as a flat blue gradient;
-  // what makes water look like water is ripple you can actually resolve.
   float chop = 0.0;
-  chop += waveAt(wpLong, t, texel, vec2(0.92,  0.39), 700.0, 1.05, 0.30);
-  chop += waveAt(wpLong, t, texel, vec2(0.86, -0.51), 380.0, 1.37, 0.26);
-  chop += waveAt(wpMid,  t, texel, vec2(0.71,  0.71), 210.0, 1.81, 0.22);
-  chop += waveAt(wpMid,  t, texel, vec2(0.99,  0.16), 120.0, 2.24, 0.17);
-  chop += waveAt(wpFine, t, texel, vec2(0.80, -0.60),  70.0, 2.90, 0.13);
-  chop += waveAt(wpFine, t, texel, vec2(0.62,  0.78),  42.0, 3.60, 0.09);
+  chop += sin(dot(wp, vec2(0.92,  0.39)) * 0.0070 - t * 1.05) * 0.52;
+  chop += sin(dot(wp, vec2(0.86, -0.51)) * 0.0105 - t * 1.37) * 0.26;
+  chop += sin(dot(wp, vec2(0.71,  0.71)) * 0.0165 - t * 1.81) * 0.15;
+  chop += sin(dot(wp, vec2(0.99,  0.16)) * 0.0262 - t * 2.24) * 0.09;
+  chop += sin(dot(wp, vec2(0.80, -0.60)) * 0.0419 - t * 2.90) * 0.05;
 
   // Wave energy is not uniform across a basin.
-  float amp = 0.72 + 0.28 * texture(uNoise, vWorld * 0.00032 + vec2(t * 0.004, 0.0)).b;
+  float amp = 0.55 + 0.45 * texture(uNoise, vWorld * 0.00032 + vec2(t * 0.004, 0.0)).b;
   chop *= amp * uWaveStrength;
   // Chop dies away in the shallows against the concrete.
-  chop *= mix(0.48, 1.0, smoothstep(0.0, 340.0, dNear));
+  chop *= mix(0.30, 1.0, smoothstep(0.0, 340.0, dNear));
 
   // --- swell rolling in from the mouth -----------------------------------
   float travel = vWorld.x - uMouthX;
@@ -210,10 +181,7 @@ void main() {
 
   // Enclosed water sits fairly flat between sets, but never dead: there is
   // always some slop moving around a basin this size.
-  // Four separate dampings were stacking here and quietly multiplying the
-  // ripple down to a few percent of brightness, which is why the pool read as
-  // a flat gradient. The swell still lifts the chop, but never smothers it.
-  chop *= 0.85 + 0.45 * max(0.0, surgeWave);
+  chop *= 0.42 + 0.72 * max(0.0, surgeWave);
   float h = chop + surgeWave * 1.6;
 
   // --- interaction with the dock wall ------------------------------------
@@ -222,13 +190,13 @@ void main() {
   float shoreline = shore * surge;
 
   // --- body -------------------------------------------------------------
-  float depthT = smoothstep(30.0, 1500.0, dBroad);
+  float depthT = smoothstep(40.0, 1900.0, dBroad);
   vec3 base = mix(uShallowColor, uDeepColor, depthT);
-  base *= 1.0 + h * 0.34 + shoreline * 0.16;
+  base *= 1.0 + h * 0.19 + shoreline * 0.11;
 
   // Thin bright lines riding the wave tops.
-  float crest = smoothstep(0.78, 1.12, h);
-  base += uSpecColor * crest * 0.11 * uSpecStrength;
+  float crest = smoothstep(0.86, 1.14, h);
+  base += uSpecColor * crest * 0.10 * uSpecStrength;
 
   // Sparkle: sharp peaks thinned by noise so it stays sparse rather than
   // turning into uniform speckle.
@@ -238,7 +206,7 @@ void main() {
   base += uSpecColor * sparkle * 0.75 * uSpecStrength;
 
   // --- foam against the concrete ---------------------------------------
-  float band = 105.0 + shoreline * 55.0;
+  float band = 70.0 + shoreline * 40.0;
   float foam = 1.0 - smoothstep(band * 0.10, band, dNear);
   float tearA = texture(uNoise, vWorld * 0.00024 + vec2(t * 0.004, t * 0.003)).b;
   float tearB = texture(uNoise, vWorld * 0.00013 - vec2(t * 0.006, t * 0.002)).a;
@@ -258,13 +226,11 @@ void main() {
   crestFoam += smoothstep(0.42, 0.86, surgeWave) * shore * 0.55;
 
   // A persistent wet line right where the water meets the concrete.
-  float wetline = (1.0 - smoothstep(0.0, 14.0, dNear)) * 0.22;
-  foam = clamp(foam * 0.78 + spray * 0.55 + wetline + crestFoam, 0.0, 1.0);
+  float wetline = (1.0 - smoothstep(0.0, 18.0, dNear)) * 0.38;
+  foam = clamp(foam * 0.62 + spray * 0.5 + wetline + crestFoam, 0.0, 1.0);
 
   // --- shadow the quay throws onto the water ----------------------------
-  // The quay wall stands well above the waterline, so it throws a real band of
-  // shadow onto the water rather than a faint darkening.
-  float shade = mix(0.26, 1.0, smoothstep(0.0, 300.0, dNear));
+  float shade = mix(0.38, 1.0, smoothstep(0.0, 230.0, dNear));
 
   vec3 col = base * shade;
   col = mix(col, uFoamColor, foam);

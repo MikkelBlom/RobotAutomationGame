@@ -61,6 +61,15 @@ building before looking at a single screenshot.
 
 ## Rendering gotchas found the hard way
 
+- **Contact shadows belong in the ALBEDO pass, drawn before the objects.** Put
+  in the light buffer, any part of a shadow overlapping its own object darkened
+  that object — and seen from directly above, an object's shadow always starts
+  underneath it, so there is no offset that avoids this. Drawn onto the floor
+  first, each object simply covers its own shadow and the problem disappears.
+- **Lamp pools stack.** A lamp on every other column, at the radii the art pass
+  used, left no dark floor between them and the additive overlaps grade into
+  odd greens and pinks. Every third bay, tighter radius.
+
 - **The floor bake needs mipmaps.** It is ~3700 px across and gets minified
   hard at anything but close zoom. Without them it aliases into a shimmering
   diagonal moire that reads as dirt across the whole hall. `createTextureFromSource`

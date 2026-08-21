@@ -57,7 +57,7 @@ export const WORLD_H = WORLD.y1 - WORLD.y0;
  * The flooded dock. Engineered excavation: straight runs on the axes, every
  * corner taken off at exactly 45 degrees (each diagonal below has |dx| = |dy|).
  *
- * 52 m long, 32 m wide: about one and a half ninths of the floor. The dock is
+ * 64 m long, 34 m wide: under two ninths of the floor. The dock is
  * a corner of this building, not its subject — most of the hall has to stay
  * clear for the automation that goes in it.
  *
@@ -70,27 +70,27 @@ export const WORLD_H = WORLD.y1 - WORLD.y0;
  * The jetties are floor, not water; the polygon bends around them.
  */
 export const WATER_POLY: Polygon = [
-  -WALL_THICKNESS, 2900,
-  1800, 2900,
-  2300, 3400,   // 45 — north jetty, west face
-  3500, 3400,   //      north jetty nose
-  4000, 2900,   // 45 — north jetty, east face
-  4500, 2900,
-  5000, 3400,   // 45 — NE corner
-  5000, 5600,
-  4500, 6100,   // 45 — SE corner
-  4000, 6100,
-  3500, 5600,   // 45 — south jetty, east face
-  2300, 5600,   //      south jetty nose
-  1800, 6100,   // 45 — south jetty, west face
-  -WALL_THICKNESS, 6100,
+  -WALL_THICKNESS, 3500,
+  1800, 3500,
+  2300, 4000,   // 45 — north jetty, west face
+  4300, 4000,   //      north jetty nose, 20 m
+  4800, 3500,   // 45 — north jetty, east face
+  5700, 3500,
+  6200, 4000,   // 45 — NE corner
+  6200, 6400,
+  5700, 6900,   // 45 — SE corner
+  4800, 6900,
+  4300, 6400,   // 45 — south jetty, east face
+  2300, 6400,   //      south jetty nose
+  1800, 6900,   // 45 — south jetty, west face
+  -WALL_THICKNESS, 6900,
 ];
 
 /** Clear channel between the jetty noses — this is the berth. */
-export const BERTH = { y0: 3400, y1: 5600, x0: 2300, x1: 3500 } as const;
+export const BERTH = { y0: 4000, y1: 6400, x0: 2300, x1: 4300 } as const;
 
 /** Vertical span of the opening where the dock passes through the west wall. */
-export const DOCK_OPENING = { y0: 2900, y1: 6100 } as const;
+export const DOCK_OPENING = { y0: 3500, y1: 6900 } as const;
 
 /** Where the channel meets open water. Swell enters here. */
 export const DOCK_MOUTH_X = WORLD.x0;
@@ -216,28 +216,30 @@ export function buildLevelGeometry(seed: number): LevelGeometry {
   }
 
   // Sodium work lamps on alternating columns, plus a few over the quay.
+  // Every third bay, not every other one: a lamp on half the columns turned
+  // the floor into overlapping pools with no dark between them.
   for (let i = 0; i < columns.length; i++) {
-    if (i % 2 !== 0) continue;
+    if (i % 3 !== 0) continue;
     const c = columns[i];
     lamps.push({
       x: c.x + rng.range(-90, 90),
       y: c.y + rng.range(-90, 90),
-      radius: rng.range(1700, 2500),
+      radius: rng.range(1150, 1600),
       intensity: rng.range(0.75, 1),
       flickers: rng.chance(0.18),
       phase: rng.range(0, 6.283),
     });
   }
-  lamps.push({ x: 3200, y: 2050, radius: 2200, intensity: 0.95, flickers: true, phase: 1.1 });
-  lamps.push({ x: 2400, y: 6600, radius: 2200, intensity: 0.9, flickers: false, phase: 2.4 });
-  lamps.push({ x: 6600, y: 4250, radius: 2000, intensity: 0.85, flickers: false, phase: 3.9 });
+  lamps.push({ x: 3200, y: 2050, radius: 1500, intensity: 0.95, flickers: true, phase: 1.1 });
+  lamps.push({ x: 2400, y: 7400, radius: 1500, intensity: 0.9, flickers: false, phase: 2.4 });
+  lamps.push({ x: 7400, y: 4250, radius: 1400, intensity: 0.85, flickers: false, phase: 3.9 });
   for (const bay of bays) {
-    lamps.push({ x: bay.x, y: 560, radius: 1400, intensity: 0.9, flickers: false, phase: bay.x });
+    lamps.push({ x: bay.x, y: 560, radius: 1000, intensity: 0.9, flickers: false, phase: bay.x });
     if (bay.occupied) {
       // Interior light in a docked trailer. Everything else beyond the shell
       // stays black, so this is the only thing that reads as "outside".
       lamps.push({
-        x: bay.x, y: -820, radius: 1000,
+        x: bay.x, y: -680, radius: 720,
         intensity: 0.8, flickers: false, phase: bay.x * 0.5,
       });
     }

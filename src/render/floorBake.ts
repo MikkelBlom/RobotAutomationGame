@@ -42,10 +42,10 @@ const PALETTE = {
   puddle: '#2f3a45',
   puddleRim: '#7d8285',
   crack: '#2b2d2e',
-  wall: '#2f3336',
-  wallLight: '#3a4045',
-  wallDark: '#191b1d',
-  curbLight: '#6a706f',
+  wall: '#4a5158',
+  wallLight: '#5b636b',
+  wallDark: '#262b30',
+  curbLight: '#7d8482',
   rust: '#7a4520',
   rustDeep: '#5c3116',
   hazardYellow: '#8d7530',
@@ -965,7 +965,7 @@ function paintOutsideFog(ctx: CanvasRenderingContext2D): void {
     h: number,
   ): void => {
     grad.addColorStop(0, `rgba(${ink},0)`);
-    grad.addColorStop(wallFraction, `rgba(${ink},0.45)`);
+    grad.addColorStop(wallFraction, `rgba(${ink},0.28)`);
     grad.addColorStop(Math.min(0.92, wallFraction + 0.34), `rgba(${ink},1)`);
     grad.addColorStop(1, `rgba(${ink},1)`);
     ctx.fillStyle = grad;
