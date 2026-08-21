@@ -1,7 +1,7 @@
 import type { LightingState } from '../core/dayCycle';
 import type { Settings } from '../core/settings';
 import type { LevelGeometry } from '../sim/level';
-import { REGIONS } from './atlas';
+import { CRATE_ART_FILL, REGIONS } from './atlas';
 import type { SpriteBatch } from './spriteBatch';
 
 /** Sodium vapour work lamps. */
@@ -149,7 +149,9 @@ export class LightingPass {
         prop.variant === 0 ? REGIONS.crateTimber
         : prop.variant === 1 ? REGIONS.crateSteel
         : REGIONS.palletStack;
-      const s = prop.size * 1.32;
+      // prop.size is the crate's real footprint; the quad has to be larger
+      // because the art does not fill its cell.
+      const s = prop.size / CRATE_ART_FILL;
       batch.pushRegion(region, prop.x, prop.y, prop.angle, s, s, 1, 1, 1, 1);
     }
   }

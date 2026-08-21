@@ -63,12 +63,15 @@ export class Game {
     this.camera = new Camera(SPAWN.x, SPAWN.y, 0.30);
     this.input = new Input(this.renderer.canvas);
     this.renderer.setLevel(this.level);
-    this.nav = new NavGrid(this.level.columns, this.level.props, BOT_RADIUS);
+    this.nav = new NavGrid(this.level.columns, this.level.props, this.level.bays, BOT_RADIUS);
     this.bots.setProps(this.level.props);
     this.entities = new EntityRenderer(this.bots);
 
-    // Start with a single machine, as asked.
-    this.bots.spawn(SPAWN.x, SPAWN.y, Math.PI);
+    // Start with a single machine, as asked. Snap it to walkable ground: a
+    // hand-picked constant silently ends up inside an obstacle's clearance the
+    // moment anything is resized, and a robot spawned there can never move.
+    const start = this.nav.nearestFree(SPAWN.x, SPAWN.y) ?? SPAWN;
+    this.bots.spawn(start.x, start.y, Math.PI);
 
     this.selectionBox = document.createElement('div');
     this.selectionBox.style.cssText = [

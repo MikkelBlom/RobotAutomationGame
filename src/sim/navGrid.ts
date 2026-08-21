@@ -1,4 +1,15 @@
-import { FLOOR, inWater, WATER_CLEARANCE, type Column, type Prop } from './level';
+import {
+  BAY_WIDTH,
+  FLOOR,
+  inWater,
+  TRAILER_DEPTH,
+  TRAILER_WIDTH,
+  WALL_THICKNESS,
+  WATER_CLEARANCE,
+  type Column,
+  type DockBay,
+  type Prop,
+} from './level';
 
 /**
  * Walkability and pathfinding for ground robots.
@@ -9,8 +20,21 @@ import { FLOOR, inWater, WATER_CLEARANCE, type Column, type Prop } from './level
  * free-form and diagonal, not stepped.
  */
 
-/** 60 cm cells: fine enough for a 58 cm-radius robot without bloating A*. */
+/** 60 cm cells: fine enough for an 84 cm-radius robot without bloating A*. */
 const CELL = 60;
+
+/**
+ * The grid covers the floor PLUS the strip north of the wall where trailers
+ * back on, because robots have to be able to drive into a docked trailer. When
+ * it covered only the slab, the trailer interiors were literally outside the
+ * pathfinder and no route into a bay could ever be found.
+ */
+const NAV = {
+  x0: FLOOR.x,
+  y0: FLOOR.y - WALL_THICKNESS - TRAILER_DEPTH,
+  w: FLOOR.w,
+  h: FLOOR.h + WALL_THICKNESS + TRAILER_DEPTH,
+} as const;
 
 export class NavGrid {
   readonly cell = CELL;
@@ -26,12 +50,13 @@ export class NavGrid {
   private readonly openHeap: Int32Array;
   private readonly inOpen: Uint8Array;
   private readonly botRadius: number;
+  private bays: DockBay[] = [];
   private searchId = 0;
   private heapSize = 0;
 
-  constructor(columns: Column[], props: Prop[], botRadius: number) {
-    this.cols = Math.ceil(FLOOR.w / CELL);
-    this.rows = Math.ceil(FLOOR.h / CELL);
+  constructor(columns: Column[], props: Prop[], bays: DockBay[], botRadius: number) {
+    this.cols = Math.ceil(NAV.w / CELL);
+    this.rows = Math.ceil(NAV.h / CELL);
     const n = this.cols * this.rows;
     this.blocked = new Uint8Array(n);
     this.gScore = new Float32Array(n);
@@ -42,27 +67,58 @@ export class NavGrid {
     this.inOpen = new Uint8Array(n);
 
     this.botRadius = botRadius;
+    this.bays = bays;
     this.rasterise(columns, props, botRadius);
   }
 
   /** Re-rasterises after the world's obstacles change, e.g. a crate lifted. */
-  rebuild(columns: Column[], props: Prop[]): void {
+  rebuild(columns: Column[], props: Prop[], bays?: DockBay[]): void {
+    if (bays) this.bays = bays;
     this.rasterise(columns, props, this.botRadius);
+  }
+
+  /**
+   * How far into a bay a robot may drive, measured from the centreline. Taken
+   * from whichever is tighter, the wall opening or the trailer body.
+   */
+  private bayHalfWidth(botRadius: number): number {
+    return Math.min(BAY_WIDTH, TRAILER_WIDTH) / 2 - botRadius - 8;
+  }
+
+  /** True inside the drivable corridor of a bay: its mouth and its trailer. */
+  private inBayCorridor(x: number, y: number, botRadius: number): boolean {
+    if (y >= FLOOR.y) return false;
+    const half = this.bayHalfWidth(botRadius);
+    if (half <= 0) return false;
+    for (const bay of this.bays) {
+      if (Math.abs(x - bay.x) > half) continue;
+      // Empty bays are sealed; only a docked trailer is drivable.
+      const back = bay.occupied ? NAV.y0 + botRadius + 40 : FLOOR.y - WALL_THICKNESS;
+      if (y >= back) return true;
+    }
+    return false;
   }
 
   private rasterise(columns: Column[], props: Prop[], botRadius: number): void {
     const edge = botRadius + 30;
     for (let cy = 0; cy < this.rows; cy++) {
       for (let cx = 0; cx < this.cols; cx++) {
-        const wx = FLOOR.x + (cx + 0.5) * CELL;
-        const wy = FLOOR.y + (cy + 0.5) * CELL;
+        const wx = NAV.x0 + (cx + 0.5) * CELL;
+        const wy = NAV.y0 + (cy + 0.5) * CELL;
         let blocked = false;
 
-        if (
+        const inBay = this.inBayCorridor(wx, wy, botRadius);
+
+        if (wy < FLOOR.y) {
+          // North of the slab: only a bay corridor is drivable, everything
+          // else out here is wall or the dark apron.
+          blocked = !inBay;
+        } else if (
           wx < FLOOR.x + edge ||
           wx > FLOOR.x + FLOOR.w - edge ||
-          wy < FLOOR.y + edge ||
-          wy > FLOOR.y + FLOOR.h - edge
+          wy > FLOOR.y + FLOOR.h - edge ||
+          // The north edge margin must not seal the bay mouths.
+          (wy < FLOOR.y + edge && !this.inBayCorridor(wx, FLOOR.y - 1, botRadius))
         ) {
           blocked = true;
         } else if (inWater(wx, wy, WATER_CLEARANCE + botRadius)) {
@@ -94,13 +150,13 @@ export class NavGrid {
 
   cellOf(x: number, y: number): { cx: number; cy: number } {
     return {
-      cx: Math.floor((x - FLOOR.x) / CELL),
-      cy: Math.floor((y - FLOOR.y) / CELL),
+      cx: Math.floor((x - NAV.x0) / CELL),
+      cy: Math.floor((y - NAV.y0) / CELL),
     };
   }
 
   centreOf(cx: number, cy: number): { x: number; y: number } {
-    return { x: FLOOR.x + (cx + 0.5) * CELL, y: FLOOR.y + (cy + 0.5) * CELL };
+    return { x: NAV.x0 + (cx + 0.5) * CELL, y: NAV.y0 + (cy + 0.5) * CELL };
   }
 
   inBounds(cx: number, cy: number): boolean {

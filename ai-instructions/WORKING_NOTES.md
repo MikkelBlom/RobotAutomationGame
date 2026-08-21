@@ -39,6 +39,26 @@ not a whole fleet.
 string-pulled against line-of-sight. Robots are never snapped to it. This
 matters — Mikkel pushed back hard on anything that reads as a grid.
 
+## Validate geometry, not just colour
+
+A "visual pass" that only tunes palettes and shader constants will sail straight
+past structural bugs. The following all shipped looking merely ugly, when in
+fact they were broken:
+
+- A loading bay placed **outside the east wall**, because the bay positions were
+  a hardcoded first + spacing that nobody checked against `FLOOR.w`.
+- **Trailers unreachable**: the nav grid covered only the slab, so trailer
+  interiors were literally outside the pathfinder, and the north edge margin
+  sealed the bay mouths for good measure. No route in could ever exist.
+- **Crates drawn up to 206 cm** — nearly robot-sized — because `prop.size` fed a
+  chain of magic multipliers rather than being the footprint in centimetres.
+- **The starting robot spawned inside a column's clearance** once columns were
+  enlarged, so it sat at full throttle re-planning forever without moving. Both
+  the spawn and stuck robots now snap to the nearest walkable point.
+
+Cheapest way to catch these: dump the numbers and compare them against the
+building before looking at a single screenshot.
+
 ## Rendering gotchas found the hard way
 
 - **The floor bake needs mipmaps.** It is ~3700 px across and gets minified

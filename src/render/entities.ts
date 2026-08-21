@@ -1,7 +1,7 @@
 import type { LightingState } from '../core/dayCycle';
 import type { Settings } from '../core/settings';
 import { BOT_LENGTH, BOT_RADIUS, BOT_WIDTH, BotState, BotTask, type BotPool } from '../sim/bots';
-import { BOT_ART, REGIONS } from './atlas';
+import { BOT_ART, CRATE_ART_FILL, REGIONS } from './atlas';
 import type { Bounds } from './lighting';
 import type { SpriteBatch } from './spriteBatch';
 
@@ -35,8 +35,9 @@ const ARM_WIDTH = 200;
 /** How far out from the centreline the arms sit, stowed and fully spread. */
 const ARM_SPREAD_IN = 0.30;
 const ARM_SPREAD_OUT = 0.62;
-/** A crate on the deck is drawn at its real footprint. */
-const CARRIED_SIZE = 165;
+/** A carried crate is a Euro pallet's footprint, drawn at real size. */
+const CARRIED_FOOTPRINT = 120;
+const CARRIED_SIZE = CARRIED_FOOTPRINT / CRATE_ART_FILL;
 
 const BOT_FRAMES = [
   REGIONS.botBody0, REGIONS.botBody1, REGIONS.botBody2, REGIONS.botBody3,

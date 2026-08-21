@@ -22,6 +22,12 @@ export const ATLAS_SIZE = 2048;
  */
 export const BOT_ART = { cell: 256, halfLength: 110, halfWidth: 76 } as const;
 
+/**
+ * Crate art occupies this fraction of its cell, so a quad drawn at
+ * footprint / CRATE_ART_FILL shows a crate of exactly that footprint.
+ */
+export const CRATE_ART_FILL = 0.80;
+
 const CELLS = {
   /** Soft radial falloff — light pools. */
   radial: [0, 0, 256, 256],
@@ -675,7 +681,7 @@ function drawCrateTimber(ctx: CanvasRenderingContext2D, rng: ReturnType<typeof m
 /** Steel transit box, ribbed lid. */
 function drawCrateSteel(ctx: CanvasRenderingContext2D, rng: ReturnType<typeof makeRng>): void {
   const { size } = cell(ctx, 'crateSteel');
-  const h = size * 0.38;
+  const h = size * 0.40;
 
   ctx.fillStyle = '#4d565c';
   ctx.beginPath();

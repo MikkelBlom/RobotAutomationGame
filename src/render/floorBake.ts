@@ -2,6 +2,7 @@ import { makeRng, TAU, type Rng } from '../core/mathUtils';
 import { pointInPolygon } from '../sim/polygon';
 import {
   BAY_APPROACH_DEPTH,
+  TRAILER_DEPTH,
   DOCK_OPENING,
   FLOOR,
   TRAILER_WIDTH,
@@ -42,7 +43,7 @@ const PALETTE = {
   puddleRim: '#7d8285',
   crack: '#2b2d2e',
   wall: '#2f3336',
-  wallLight: '#3f4448',
+  wallLight: '#3a4045',
   wallDark: '#191b1d',
   curbLight: '#6a706f',
   rust: '#7a4520',
@@ -50,7 +51,7 @@ const PALETTE = {
   hazardYellow: '#8d7530',
   hazardDark: '#2a2b28',
   gate: '#3a3f43',
-  leveller: '#464d53',
+  leveller: '#363c42',
   trailerFloor: '#5e5138',
   gateDark: '#23272a',
   pit: '#0f141a',
@@ -215,15 +216,20 @@ function paintLoadingBays(ctx: CanvasRenderingContext2D, rng: Rng, bays: DockBay
     // Dock leveller plate, set into the slab just inside.
     const plateDepth = 210;
     ctx.fillStyle = PALETTE.leveller;
-    ctx.fillRect(x0 + 12, FLOOR.y, bay.width - 24, plateDepth);
-    ctx.strokeStyle = 'rgba(12,14,16,0.7)';
-    ctx.lineWidth = 7;
-    ctx.strokeRect(x0 + 12, FLOOR.y, bay.width - 24, plateDepth);
+    ctx.fillRect(x0, FLOOR.y, bay.width, plateDepth);
+    // Recessed into the slab: dark on the far lip, light where it rises.
+    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    ctx.fillRect(x0, FLOOR.y + plateDepth - 12, bay.width, 12);
+    ctx.fillStyle = 'rgba(255,255,255,0.09)';
+    ctx.fillRect(x0, FLOOR.y, bay.width, 7);
+    ctx.strokeStyle = 'rgba(12,14,16,0.6)';
+    ctx.lineWidth = 5;
+    ctx.strokeRect(x0, FLOOR.y, bay.width, plateDepth);
     // Chequer plate.
     ctx.strokeStyle = 'rgba(255,255,255,0.13)';
     ctx.lineWidth = 6;
     ctx.beginPath();
-    for (let d = -bay.width; d < bay.width * 2; d += 40) {
+    for (let d = -bay.width; d < bay.width * 2; d += 44) {
       ctx.moveTo(x0 + d, FLOOR.y);
       ctx.lineTo(x0 + d + plateDepth, FLOOR.y + plateDepth);
       ctx.moveTo(x0 + d + plateDepth, FLOOR.y);
@@ -231,7 +237,7 @@ function paintLoadingBays(ctx: CanvasRenderingContext2D, rng: Rng, bays: DockBay
     }
     ctx.save();
     ctx.beginPath();
-    ctx.rect(x0 + 12, FLOOR.y, bay.width - 24, plateDepth);
+    ctx.rect(x0, FLOOR.y, bay.width, plateDepth);
     ctx.clip();
     ctx.stroke();
     ctx.restore();
@@ -274,8 +280,10 @@ function paintTrailer(
   const x0 = bay.x - halfW;
   // Runs from the wall face out into the apron; only the rear of it is on screen.
   const y1 = northY;
-  const y0 = WORLD.y0 + 40;
-  const depth = y1 - y0;
+  // Ends within the apron so the whole trailer is on screen with dark behind
+  // it. Running it to the world edge meant it was always cut off.
+  const depth = TRAILER_DEPTH;
+  const y0 = y1 - depth;
 
   // Body shell, slightly wider than the interior.
   ctx.fillStyle = '#2a2f34';
@@ -358,7 +366,7 @@ function paintWallRun(
   // Cladding sheets: each weathered slightly differently.
   const sheet = 1200;
   for (let a = alongStart; a < alongStart + runLength; a += sheet) {
-    ctx.globalAlpha = rng.range(0.05, 0.14);
+    ctx.globalAlpha = rng.range(0.04, 0.10);
     ctx.fillStyle = rng.chance(0.5) ? PALETTE.wallLight : PALETTE.wallDark;
     if (horizontal) ctx.fillRect(a, y, sheet, h);
     else ctx.fillRect(x, a, w, sheet);
@@ -427,8 +435,8 @@ function paintWallRun(
 
   // Rust bleeding from the fixings.
   for (let i = 0; i < 34; i++) {
-    ctx.globalAlpha = rng.range(0.05, 0.17);
-    ctx.fillStyle = rng.chance(0.5) ? PALETTE.rust : PALETTE.rustDeep;
+    ctx.globalAlpha = rng.range(0.04, 0.11);
+    ctx.fillStyle = rng.chance(0.22) ? PALETTE.rust : PALETTE.wallDark;
     const a = rng.range(alongStart, alongStart + runLength);
     const across = rng.range(0, thickness);
     const px = horizontal ? a : x + across;

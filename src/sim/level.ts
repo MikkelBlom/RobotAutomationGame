@@ -24,10 +24,14 @@ import { distanceToEdges, pointInPolygon, polygonBounds, type Polygon } from './
  * rolls in from it.
  */
 
-export const WALL_THICKNESS = 110;
+/** Clad steel wall with its structural frame inside it. */
+export const WALL_THICKNESS = 190;
 
 /** Interior floor slab: 120 m x 84 m. */
 export const FLOOR = { x: 0, y: 0, w: 12000, h: 8400 } as const;
+
+/** How far a trailer's interior reaches back from the wall. */
+export const TRAILER_DEPTH = 1000;
 
 /**
  * Dark margin outside the shell, on every side. The camera may reach into it,
@@ -36,7 +40,7 @@ export const FLOOR = { x: 0, y: 0, w: 12000, h: 8400 } as const;
  * The north margin is much deeper because trailers back onto the loading bays
  * there and their interiors have to fit.
  */
-export const APRON = { north: 1250, south: 500, west: 500, east: 500 } as const;
+export const APRON = { north: TRAILER_DEPTH + 460, south: 520, west: 520, east: 520 } as const;
 
 /** Outer extent the camera may reach. */
 export const WORLD = {
@@ -53,35 +57,40 @@ export const WORLD_H = WORLD.y1 - WORLD.y0;
  * The flooded dock. Engineered excavation: straight runs on the axes, every
  * corner taken off at exactly 45 degrees (each diagonal below has |dx| = |dy|).
  *
- * Sized around a hull. The basin is 89 m long and 40 m wide, and the two
- * concrete boarding jetties reach out from opposite banks — directly facing
- * each other, not staggered — leaving a 14 m channel between their noses with
- * 40 m of quay down each side. A large fishing boat or a submarine lies along
- * that channel with crew able to step across from either bank. The jetties are
- * floor, not water; the polygon bends around them.
+ * 52 m long, 32 m wide: about one and a half ninths of the floor. The dock is
+ * a corner of this building, not its subject — most of the hall has to stay
+ * clear for the automation that goes in it.
+ *
+ * It reads as a RECTANGLE. The two concrete boarding jetties are modest bites
+ * out of opposite banks, 5 m deep and 12 m along the nose, leaving a 22 m
+ * channel for a boat to berth in with crew able to step across from either
+ * side. Cut deeper or longer, they pinch the pool into an hourglass, which is
+ * not what a dock looks like.
+ *
+ * The jetties are floor, not water; the polygon bends around them.
  */
 export const WATER_POLY: Polygon = [
-  -WALL_THICKNESS, 2400,
-  1100, 2400,
-  2400, 3700,   // 45 — north jetty, west face
-  6400, 3700,   //      north jetty nose, 40 m of quay
-  7700, 2400,   // 45 — north jetty, east face
-  7900, 2400,
-  8800, 3300,   // 45 — NE corner
-  8800, 5500,
-  7900, 6400,   // 45 — SE corner
-  7700, 6400,
-  6400, 5100,   // 45 — south jetty, east face
-  2400, 5100,   //      south jetty nose
-  1100, 6400,   // 45 — south jetty, west face
-  -WALL_THICKNESS, 6400,
+  -WALL_THICKNESS, 2900,
+  1800, 2900,
+  2300, 3400,   // 45 — north jetty, west face
+  3500, 3400,   //      north jetty nose
+  4000, 2900,   // 45 — north jetty, east face
+  4500, 2900,
+  5000, 3400,   // 45 — NE corner
+  5000, 5600,
+  4500, 6100,   // 45 — SE corner
+  4000, 6100,
+  3500, 5600,   // 45 — south jetty, east face
+  2300, 5600,   //      south jetty nose
+  1800, 6100,   // 45 — south jetty, west face
+  -WALL_THICKNESS, 6100,
 ];
 
 /** Clear channel between the jetty noses — this is the berth. */
-export const BERTH = { y0: 3700, y1: 5100, x0: 2400, x1: 6400 } as const;
+export const BERTH = { y0: 3400, y1: 5600, x0: 2300, x1: 3500 } as const;
 
 /** Vertical span of the opening where the dock passes through the west wall. */
-export const DOCK_OPENING = { y0: 2400, y1: 6400 } as const;
+export const DOCK_OPENING = { y0: 2900, y1: 6100 } as const;
 
 /** Where the channel meets open water. Swell enters here. */
 export const DOCK_MOUTH_X = WORLD.x0;
@@ -110,17 +119,21 @@ export interface DockBay {
  * side by side and nothing else. These are wider so a robot can drive in, turn,
  * and set two crates down abreast.
  */
-export const TRAILER_WIDTH = 420;
-export const BAY_WIDTH = 520;
+export const TRAILER_WIDTH = 480;
+export const BAY_WIDTH = 580;
 /** Floor strip kept clear in front of the loading bays. */
 export const BAY_APPROACH_DEPTH = 900;
 
 /** Bays sit along the north wall towards the east end. */
 export function buildDockBays(): DockBay[] {
   const bays: DockBay[] = [];
-  const first = 8600;
-  const spacing = 1150;
-  for (let i = 0; i < 4; i++) {
+  // Spread across the eastern third, with the outermost bay's full width kept
+  // clear of the east wall. Running one off the end of the building was a bug.
+  const count = 4;
+  const spacing = 1250;
+  const span = spacing * (count - 1);
+  const first = FLOOR.x + FLOOR.w - 900 - span;
+  for (let i = 0; i < count; i++) {
     bays.push({ x: first + i * spacing, width: BAY_WIDTH, occupied: i === 1 || i === 2 });
   }
   return bays;
@@ -198,7 +211,7 @@ export function buildLevelGeometry(seed: number): LevelGeometry {
       if (inWater(cx, cy, 420)) continue;
       // Keep the approach to the loading bays clear.
       if (cy < BAY_APPROACH_DEPTH && bays.some((b) => Math.abs(cx - b.x) < 700)) continue;
-      columns.push({ x: cx, y: cy, size: rng.range(56, 66), rust: rng.next() });
+      columns.push({ x: cx, y: cy, size: rng.range(115, 135), rust: rng.next() });
     }
   }
 
@@ -300,10 +313,13 @@ function buildProps(
       for (let attempt = 0; attempt < 40; attempt++) {
         const x = cx + rng.range(-spread, spread);
         const y = cy + rng.range(-spread, spread);
-        // Roughly a pallet footprint, with some larger crates.
-        const size = rng.chance(0.7) ? rng.range(105, 135) : rng.range(150, 195);
-        // Collision must exceed the drawn extent, or robots ride over corners.
-        const radius = size * 0.62;
+        // `size` is the crate's real footprint in centimetres. Most are a
+        // Euro pallet's 120 cm; a few are the larger 150 cm transit boxes. The
+        // robot's deck is ~145 cm, so a pallet crate fits and a big one does
+        // not — which is the point.
+        const size = rng.chance(0.75) ? rng.range(112, 126) : rng.range(148, 162);
+        // Collision reaches the corners of the square, not just its faces.
+        const radius = size * 0.72;
         if (!clearOf(x, y, radius)) continue;
         props.push({
           x, y,

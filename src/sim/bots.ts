@@ -600,8 +600,15 @@ export class BotPool {
     } else if (!nav.isBlockedWorld(this.x[i], ny)) {
       this.y[i] = ny;
     } else {
-      // Wedged. Re-plan from here; if that fails too, drop this leg and try
-      // the next queued one rather than abandoning the whole route.
+      // Wedged against something. Nudge out to the nearest walkable point
+      // first: re-planning alone just produces the same blocked first step
+      // again next frame, and the robot sits there at full throttle going
+      // nowhere.
+      const free = nav.nearestFree(this.x[i], this.y[i]);
+      if (free) {
+        this.x[i] = free.x;
+        this.y[i] = free.y;
+      }
       if (!this.driveTo(i, this.goalX[i], this.goalY[i], nav)) {
         if (!this.advanceQueue(i, nav)) this.clearOrders(i);
       }
