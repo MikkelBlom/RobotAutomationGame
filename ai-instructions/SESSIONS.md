@@ -200,3 +200,25 @@ Not done: nothing was cut. The open question is in the handoff — with zero
 charging points commissioned by default there is no way back from a flat battery.
 Drain was slowed to roughly three in-game days to keep that a long way off, but
 it is a real dead end until a point can be bought.
+
+---
+
+## 2026-08-21 — Claude Code (Opus 5) — integration pass
+
+Three notes from playing, all landed. Reasoning in WORKING_NOTES ("Making things
+belong").
+
+- **Charge gauge is now part of the hull.** Recess baked into all four body
+  frames; only the light drawn over it, inset and held below full additive
+  strength. `drawChargeSockets` deleted. Deck shortened 132 -> 118 art units and
+  the sensor head moved forward to open the strip of chassis it sits in.
+- **Plate cable redrawn** as a thin wandering run along a polyline baked by
+  `layWire()`, and the beacon moved off the trailer's door post onto the pier
+  outside the bay opening where a docked trailer cannot cover it.
+- **First charging point commissioned by default** (`chargePoints: 1`).
+
+Verified end to end after: three crates hauled, plate-dispatched, shipped at
+3/$135 as the trailer rolled, then the robot driven to the point and charging
+square at angle 0. 901 robots at sim 0.97 ms / draw 0.56 ms.
+
+Not done: nothing cut.

@@ -20,7 +20,19 @@ export const ATLAS_SIZE = 2048;
  * than the hull so it stays sharp at close zoom; renderers convert hull size
  * to sprite size with these.
  */
-export const BOT_ART = { cell: 256, halfLength: 110, halfWidth: 76 } as const;
+export const BOT_ART = {
+  cell: 256,
+  halfLength: 110,
+  halfWidth: 76,
+  /**
+   * The charge gauge recess, in art units from the hull centre.
+   *
+   * Baked into the body sprite rather than drawn over it. A lit bar laid on top
+   * of a robot is a health bar; a lit bar sitting in a machined slot that is
+   * shaded and worn along with the rest of the hull is an instrument.
+   */
+  gauge: { x: 36, halfLen: 33, halfWide: 11 },
+} as const;
 
 /**
  * Crate art occupies this fraction of its cell, so a quad drawn at
@@ -97,8 +109,6 @@ const CELLS = {
 
   /** Charge readout on a robot's deck. Tinted and scaled at draw time. */
   chargeStrip: [1280, 1024, 256, 256],
-  /** Recess the strip sits in, so it reads as a fitting when unlit. */
-  chargeSocket: [1536, 1024, 256, 256],
 
   /** Charging cabinet, live. Connector faces +x. */
   chargeDock: [256, 1024, 256, 256],
@@ -507,7 +517,9 @@ function drawBotBody(
 
   // The deck. Sized for a Euro pallet with room to set it down.
   const deckX0 = -L + 16;
-  const deckLen = 132;
+  // Trimmed to open a strip of chassis between the deck and the sensor head for
+  // the gauge. Still a Euro pallet's length with clearance.
+  const deckLen = 118;
   const deckHalf = W - 30;
   ctx.fillStyle = '#6a727a';
   ctx.beginPath();
@@ -546,11 +558,43 @@ function drawBotBody(
   // Sensor head at the nose.
   ctx.fillStyle = '#3a4148';
   ctx.beginPath();
-  ctx.roundRect(L - 72, -34, 62, 68, 12);
+  ctx.roundRect(L - 58, -34, 50, 68, 12);
   ctx.fill();
   ctx.strokeStyle = 'rgba(18,20,22,0.7)';
   ctx.lineWidth = 5;
   ctx.stroke();
+
+  // Charge gauge recess. Cut into the chassis before the wear passes, so it
+  // scuffs with everything else instead of sitting on top looking new.
+  {
+    const g = BOT_ART.gauge;
+    ctx.fillStyle = '#2b3238';
+    ctx.beginPath();
+    ctx.roundRect(g.x - g.halfWide - 4, -g.halfLen - 4, (g.halfWide + 4) * 2, (g.halfLen + 4) * 2, 6);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(210,220,228,0.16)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    // The slot itself, dark and slightly graded so it reads as a recess.
+    const well = ctx.createLinearGradient(g.x - g.halfWide, 0, g.x + g.halfWide, 0);
+    well.addColorStop(0, '#0b0d0f');
+    well.addColorStop(0.55, '#15181c');
+    well.addColorStop(1, '#0d1013');
+    ctx.fillStyle = well;
+    ctx.beginPath();
+    ctx.roundRect(g.x - g.halfWide, -g.halfLen, g.halfWide * 2, g.halfLen * 2, 3);
+    ctx.fill();
+    // Segment ticks across the well, so an empty gauge still looks like one.
+    ctx.strokeStyle = 'rgba(120,132,144,0.20)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for (let i = 1; i < 5; i++) {
+      const y = -g.halfLen + (i * g.halfLen * 2) / 5;
+      ctx.moveTo(g.x - g.halfWide + 2, y);
+      ctx.lineTo(g.x + g.halfWide - 2, y);
+    }
+    ctx.stroke();
+  }
 
   // Wear.
   for (let i = 0; i < 18; i++) {
@@ -1236,38 +1280,22 @@ function drawDockPlate(ctx: CanvasRenderingContext2D, rng: ReturnType<typeof mak
 }
 
 /**
- * Armoured cable, spanning the cell edge to edge so runs butt together.
+ * Cable, spanning the cell edge to edge so segments of a run butt together.
  *
- * Clipped to the floor at intervals rather than banded: a plain dark line reads
- * as a drawing mistake, a cable with fixings reads as something installed.
+ * Deliberately plain. It had saddle clips and banding, which at the size this
+ * is actually drawn read as a chain lying on the floor rather than as the thing
+ * you barely notice until you follow it to see where it goes.
  */
 function drawPlateWire(ctx: CanvasRenderingContext2D): void {
   const { size } = cell(ctx, 'plateWire');
   const half = size / 2;
-  // The cable has to fill most of the quad: drawn at a tenth of the cell it
-  // came out a hairline on the floor and the clips were invisible.
   const t = size * 0.30;
-
-  ctx.fillStyle = '#191c20';
+  ctx.fillStyle = '#1c1f23';
   ctx.fillRect(-half, -t / 2, size, t);
-  ctx.fillStyle = 'rgba(150,162,174,0.20)';
-  ctx.fillRect(-half, -t / 2 + t * 0.12, size, t * 0.22);
-  ctx.fillStyle = 'rgba(0,0,0,0.40)';
-  ctx.fillRect(-half, t / 2 - t * 0.24, size, t * 0.24);
-
-  // Saddle clips, straddling the cable and pinned either side.
-  for (let i = 0; i < 3; i++) {
-    const x = -half + size * (0.18 + i * 0.32);
-    ctx.fillStyle = '#4a5058';
-    ctx.fillRect(x - t * 0.22, -t * 0.92, t * 0.44, t * 1.84);
-    ctx.fillStyle = 'rgba(0,0,0,0.45)';
-    ctx.fillRect(x - t * 0.22, t * 0.62, t * 0.44, t * 0.30);
-    ctx.fillStyle = '#2a2e33';
-    ctx.beginPath();
-    ctx.arc(x, -t * 0.72, t * 0.13, 0, TAU);
-    ctx.arc(x, t * 0.72, t * 0.13, 0, TAU);
-    ctx.fill();
-  }
+  ctx.fillStyle = 'rgba(150,162,174,0.16)';
+  ctx.fillRect(-half, -t / 2, size, t * 0.3);
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  ctx.fillRect(-half, t / 2 - t * 0.26, size, t * 0.26);
   ctx.restore();
 }
 
@@ -1597,11 +1625,13 @@ function drawChargeGlow(ctx: CanvasRenderingContext2D): void {
  * where a hundred machines are on screen each one is a few pixels, so the
  * COLOUR has to carry the meaning and the length is the detail you get when you
  * lean in. Hence a plain lit bar rather than pips or a ring.
+ *
+ * Only the light lives here. The slot it sits in is part of the body sprite.
  */
 function drawChargeStrip(ctx: CanvasRenderingContext2D): void {
   const strip = cell(ctx, 'chargeStrip');
-  const w = strip.size * 0.45;
-  const h = strip.size * 0.36;
+  const w = strip.size * 0.46;
+  const h = strip.size * 0.40;
   const grad = ctx.createLinearGradient(0, -h, 0, h);
   grad.addColorStop(0, 'rgba(255,255,255,0.72)');
   grad.addColorStop(0.42, 'rgba(255,255,255,1)');
@@ -1619,15 +1649,4 @@ function drawChargeStrip(ctx: CanvasRenderingContext2D): void {
   ctx.globalCompositeOperation = 'source-over';
   ctx.restore();
 
-  const socket = cell(ctx, 'chargeSocket');
-  const sw = socket.size * 0.48;
-  const sh = socket.size * 0.42;
-  ctx.fillStyle = '#14161a';
-  ctx.beginPath();
-  ctx.roundRect(-sw, -sh, sw * 2, sh * 2, sh * 0.6);
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(140,150,162,0.30)';
-  ctx.lineWidth = 3;
-  ctx.stroke();
-  ctx.restore();
 }

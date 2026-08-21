@@ -1,8 +1,7 @@
 import type { LightingState } from '../core/dayCycle';
 import type { Settings } from '../core/settings';
 import {
-  CHARGE_PAD_H, CHARGE_PAD_W, FLOOR, SHELL, TRAILER_DEPTH, TRAILER_WIDTH,
-  WALL_THICKNESS, type LevelGeometry,
+  CHARGE_PAD_H, CHARGE_PAD_W, FLOOR, TRAILER_DEPTH, TRAILER_WIDTH, type LevelGeometry,
 } from '../sim/level';
 import { TrailerFleet } from '../sim/trailers';
 import { REGIONS } from './atlas';
@@ -65,8 +64,8 @@ export function pushCastShadow(
  * daylight cuts a dark streak through the pool, rather than the pool simply
  * winning.
  */
-/** Cable thickness on the floor. Thin enough to read as conduit, not a stripe. */
-const PLATE_WIRE_WIDTH = 62;
+/** Cable thickness on the floor. Barely there, on purpose. */
+const PLATE_WIRE_WIDTH = 17;
 /** Charging cabinet footprint. */
 const DOCK_SIZE = 300;
 const BEACON_SIZE = 190;
@@ -328,25 +327,20 @@ export class LightingPass {
       if (!visible(bounds, plate.x, plate.y, plate.size * 3)) continue;
       const trailer = fleet.trailers.find((t) => t.bay.x === plate.bayX);
 
-      // Cable: north out of the plate to the wall, then west along it to the
-      // door post. The runs stop short of the corner and a square patch fills
-      // it, so the elbow is a join rather than two sticks crossing.
-      const runY = SHELL.y0 + WALL_THICKNESS * 0.58;
-      const half = PLATE_WIRE_WIDTH / 2;
-      const upLength = plate.y - runY - half;
-      batch.pushRegion(
-        REGIONS.plateWire, plate.x, (plate.y + runY + half) / 2, Math.PI / 2,
-        upLength, PLATE_WIRE_WIDTH, 1, 1, 1, 1,
-      );
-      const acrossLength = Math.abs(plate.x - plate.wireX) - half;
-      batch.pushRegion(
-        REGIONS.plateWire, (plate.x - half + plate.wireX) / 2, runY, 0,
-        acrossLength, PLATE_WIRE_WIDTH, 1, 1, 1, 1,
-      );
-      batch.pushRegion(
-        REGIONS.plateWire, plate.x, runY, 0,
-        PLATE_WIRE_WIDTH, PLATE_WIRE_WIDTH, 1, 1, 1, 1,
-      );
+      // The cable, segment by segment along its baked polyline. Each segment
+      // overruns the next slightly so the joints do not gap on the curves.
+      const w = plate.wire;
+      for (let k = 0; k + 3 < w.length; k += 2) {
+        const ax = w[k];
+        const ay = w[k + 1];
+        const bx = w[k + 2];
+        const by = w[k + 3];
+        const run = Math.hypot(bx - ax, by - ay);
+        batch.pushRegion(
+          REGIONS.plateWire, (ax + bx) / 2, (ay + by) / 2, Math.atan2(by - ay, bx - ax),
+          run + PLATE_WIRE_WIDTH * 0.5, PLATE_WIRE_WIDTH, 1, 1, 1, 1,
+        );
+      }
 
       // The pad sinks and darkens under a robot, which is the only feedback
       // needed that it has registered.
@@ -358,9 +352,9 @@ export class LightingPass {
         plate.size * scale, plate.size * scale, shade, shade, shade, 1,
       );
 
-      // Beacon, on the wall at the door post the cable runs to.
+      // Beacon, on the pier the cable runs to.
       batch.pushRegion(
-        REGIONS.warnLamp, plate.wireX, runY, 0,
+        REGIONS.warnLamp, plate.lampX, plate.lampY, 0,
         BEACON_SIZE, BEACON_SIZE, 1, 1, 1, 1,
       );
     }
@@ -374,11 +368,10 @@ export class LightingPass {
     for (const plate of this.level.plates) {
       const trailer = fleet.trailers.find((t) => t.bay.x === plate.bayX);
       if (!trailer || trailer.alarm < 0.02) continue;
-      const runY = SHELL.y0 + WALL_THICKNESS * 0.58;
-      if (!visible(bounds, plate.wireX, runY, 1400)) continue;
+      if (!visible(bounds, plate.lampX, plate.lampY, 1400)) continue;
       const flash = trailer.alarm * beaconFlash(time);
       batch.pushRegion(
-        REGIONS.radial, plate.wireX, runY + 220, 0, 1500, 1500,
+        REGIONS.radial, plate.lampX, plate.lampY + 240, 0, 1500, 1500,
         1.0, 0.17, 0.13, flash * 0.42,
       );
     }
@@ -391,12 +384,11 @@ export class LightingPass {
     for (const plate of this.level.plates) {
       const trailer = fleet.trailers.find((t) => t.bay.x === plate.bayX);
       if (!trailer || trailer.alarm < 0.02) continue;
-      const runY = SHELL.y0 + WALL_THICKNESS * 0.58;
-      if (!visible(bounds, plate.wireX, runY, 700)) continue;
+      if (!visible(bounds, plate.lampX, plate.lampY, 700)) continue;
       const flash = trailer.alarm * beaconFlash(time);
       const size = BEACON_SIZE * (1.5 + flash * 0.55);
       batch.pushRegion(
-        REGIONS.warnGlow, plate.wireX, runY, 0, size, size,
+        REGIONS.warnGlow, plate.lampX, plate.lampY, 0, size, size,
         1, 1, 1, 0.22 + flash * 0.78,
       );
     }

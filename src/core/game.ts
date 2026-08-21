@@ -232,7 +232,6 @@ export class Game {
       time,
       drawEntities: (batch, bounds) => {
         this.entities.drawBodies(batch, bounds);
-        this.entities.drawChargeSockets(batch, bounds);
         this.entities.drawLoad(batch, bounds);
       },
       drawEntityShadows: (batch, bounds) =>

@@ -74,9 +74,16 @@ export interface PlanMark {
 const DOORWAY_INSET = 260;
 
 /** Charge readout geometry, in centimetres on the hull. */
-const STRIP_LENGTH = 96;
-const STRIP_WIDTH = 30;
-const STRIP_FORWARD = 74;
+/**
+ * Charge gauge, derived from the recess baked into the body art so the light
+ * always sits inside its slot however the sprite is scaled.
+ */
+const ART_X = BOT_LENGTH / (BOT_ART.halfLength * 2);
+const ART_Y = BOT_WIDTH / (BOT_ART.halfWidth * 2);
+const STRIP_FORWARD = BOT_ART.gauge.x * ART_X;
+/** A hair inside the well, so its edge frames the light on every side. */
+const STRIP_LENGTH = BOT_ART.gauge.halfLen * 2 * ART_Y - 5;
+const STRIP_WIDTH = BOT_ART.gauge.halfWide * 2 * ART_X - 4;
 /** How far inside the cabinet the feed appears to leave from. */
 const FEED_INSET = 120;
 const FEED_PULSES = 3;
@@ -85,6 +92,11 @@ const CHARGE_FULL = { r: 0.42, g: 1.0, b: 0.56 };
 const CHARGE_MID = { r: 1.0, g: 0.80, b: 0.24 };
 const CHARGE_LOW = { r: 1.0, g: 0.28, b: 0.20 };
 const FLAT_TINT = { r: 0.72, g: 0.14, b: 0.12 };
+/**
+ * How hard the gauge is driven into the additive pass. Below one on purpose:
+ * at full strength it blew out its own housing and read as an overlay again.
+ */
+const GAUGE_GAIN = 0.78;
 
 function mixTint(
   a: { r: number; g: number; b: number },
@@ -293,7 +305,7 @@ export class EntityRenderer {
       batch.pushRegion(
         REGIONS.chargeStrip,
         cx + Math.cos(across) * shift, cy + Math.sin(across) * shift, across,
-        filled, STRIP_WIDTH, tint.r, tint.g, tint.b, pulse,
+        filled, STRIP_WIDTH, tint.r, tint.g, tint.b, pulse * GAUGE_GAIN,
       );
 
       if (b.charging[i]) {
@@ -303,8 +315,8 @@ export class EntityRenderer {
         batch.pushRegion(
           REGIONS.chargeStrip,
           cx + Math.cos(across) * at, cy + Math.sin(across) * at, across,
-          STRIP_LENGTH * 0.22, STRIP_WIDTH * 1.25,
-          CHARGE_FULL.r, CHARGE_FULL.g, CHARGE_FULL.b, 0.85,
+          STRIP_LENGTH * 0.24, STRIP_WIDTH,
+          CHARGE_FULL.r, CHARGE_FULL.g, CHARGE_FULL.b, 0.7,
         );
         this.drawFeed(batch, b.x[i], b.y[i], chargers, time);
       }
@@ -342,25 +354,6 @@ export class EntityRenderer {
       batch.pushRegion(
         REGIONS.dot, fromX - span * t, pad.y, 0, size, size,
         CHARGE_FULL.r, CHARGE_FULL.g, CHARGE_FULL.b, fade * 0.85,
-      );
-    }
-  }
-
-  /**
-   * The recess the charge readout sits in. Albedo, not glow: a dark fitting
-   * pushed into an additive pass contributes nothing and simply is not there.
-   */
-  drawChargeSockets(batch: SpriteBatch, bounds: Bounds): void {
-    const b = this.bots;
-    for (let i = 0; i < b.count; i++) {
-      if (!visible(bounds, b.x[i], b.y[i], BOT_LENGTH)) continue;
-      const cos = Math.cos(b.angle[i]);
-      const sin = Math.sin(b.angle[i]);
-      batch.pushRegion(
-        REGIONS.chargeSocket,
-        b.x[i] + cos * STRIP_FORWARD, b.y[i] + sin * STRIP_FORWARD,
-        b.angle[i] + Math.PI / 2, STRIP_LENGTH * 1.12, STRIP_WIDTH * 1.2,
-        1, 1, 1, 1,
       );
     }
   }

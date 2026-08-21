@@ -192,8 +192,48 @@ export interface DockPlate {
   size: number;
   /** Which bay it dispatches, matched on the bay's centre x. */
   bayX: number;
-  /** Where its cable meets the wall, so the link is visible on the floor. */
-  wireX: number;
+  /** The beacon this plate is wired to. */
+  lampX: number;
+  lampY: number;
+  /**
+   * The cable, as a flat [x, y, ...] polyline from the plate to the lamp.
+   *
+   * Baked once rather than drawn as an L at render time: a right angle across a
+   * factory floor looks like a diagram, and a cable somebody actually laid
+   * wanders. Precomputed because it never changes.
+   */
+  wire: Float32Array;
+}
+
+/** Points along a plate's cable run. Enough to curve without a visible chain. */
+const WIRE_STEPS = 22;
+
+/**
+ * Lays a cable from the plate to the lamp.
+ *
+ * A cubic ease across the gap gives the sweep; a half-wavelength of sine across
+ * it gives the slack. Both are tiny — the run has to read as something you only
+ * notice when you follow it.
+ */
+function layWire(
+  fromX: number, fromY: number, toX: number, toY: number, sag: number,
+): Float32Array {
+  const out = new Float32Array((WIRE_STEPS + 1) * 2);
+  const dx = toX - fromX;
+  const dy = toY - fromY;
+  const len = Math.hypot(dx, dy) || 1;
+  // Normal to the run, for the wander.
+  const nx = -dy / len;
+  const ny = dx / len;
+  for (let i = 0; i <= WIRE_STEPS; i++) {
+    const t = i / WIRE_STEPS;
+    const ease = t * t * (3 - 2 * t);
+    // Two lobes, the second smaller, so it snakes rather than bows.
+    const wander = Math.sin(t * Math.PI) * sag + Math.sin(t * Math.PI * 2) * sag * 0.42;
+    out[i * 2] = fromX + dx * ease + nx * wander;
+    out[i * 2 + 1] = fromY + dy * ease + ny * wander;
+  }
+  return out;
 }
 
 /** Plate radius a robot has to be within for it to read as pressed. */
@@ -203,15 +243,21 @@ export function buildDockPlates(bays: DockBay[]): DockPlate[] {
   // Every station gets one, in service or not. A shuttered bay with its own
   // dead plate and cable reads as a station waiting to be opened; a bare wall
   // reads as nothing at all.
-  return bays.map((b) => ({
+  return bays.map((b) => {
     // Just clear of the opening on the right-hand side, far enough off the
     // wall that a robot standing on it is not in the trailer's way.
-    x: b.x + BAY_WIDTH / 2 + 210,
-    y: FLOOR.y + 330,
-    size: 260,
-    bayX: b.x,
-    wireX: b.x + TRAILER_WIDTH / 2,
-  }));
+    const x = b.x + BAY_WIDTH / 2 + 210;
+    const y = FLOOR.y + 330;
+    // The lamp sits on the pier OUTSIDE the opening. Mounted on the door post
+    // it ended up under the trailer, where the one thing it has to do — be
+    // seen — it could not.
+    const lampX = b.x + BAY_WIDTH / 2 + 92;
+    const lampY = FLOOR.y - WALL_THICKNESS * 0.42;
+    return {
+      x, y, size: 260, bayX: b.x, lampX, lampY,
+      wire: layWire(x, y - 120, lampX, lampY + 30, 74),
+    };
+  });
 }
 
 /**

@@ -409,3 +409,33 @@ without a real input event, so it waits for the first pointerdown or keydown.
 
 **Refusals have a sound now, not words.** That is the only feedback a refused
 order gets, and it is consistent with the no-text-UI rule.
+
+## Making things belong (2026-08-21, late)
+
+**A lit bar drawn over a robot is a health bar. A lit bar sitting in a machined
+slot is an instrument.** The charge readout used to be a pill sprite plus a
+separate socket sprite, both floating over the body, and it read as UI. The slot
+is now baked into all four `botBody` frames — cut in before the wear pass, so it
+scuffs along with the rest of the hull — and only the light is drawn over it.
+`BOT_ART.gauge` carries the recess geometry in art units so the light is derived
+from the same numbers the art used and can never drift out of its own housing.
+Two more things mattered: the light is drawn a few centimetres INSIDE the well
+so the bezel frames it on every side, and `GAUGE_GAIN` holds it below full
+additive strength — at 1.0 it blew out its own housing and looked pasted on
+again. Cost also dropped: one sprite per robot instead of two.
+
+**Subtle means thin AND wandering.** The plate cable went from a hairline, to a
+clipped conduit that read as a chain, to what it should have been: a plain
+17 cm cable following a baked polyline that eases across the gap with a sine
+wander on the normal. A right angle across a factory floor looks like a diagram;
+something somebody actually laid wanders. `layWire()` in `level.ts` bakes it
+once — it never changes, so it has no business being recomputed per frame.
+
+**Mount things where they can be seen, not where they are wired.** The beacon was
+on the trailer's door post, which is correct engineering and completely useless:
+a docked trailer covers it. It sits on the pier outside the bay opening now. If a
+fixture's whole job is to be seen, that beats where the cable would really run.
+
+**One charging point starts commissioned.** With none there is no way back from a
+flat battery, which is a dead end rather than a difficulty. When points become
+purchasable this can go back to zero — but only then.

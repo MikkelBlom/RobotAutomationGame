@@ -58,7 +58,9 @@ export function defaultSettings(): Settings {
     showStats: true,
 
     simSpeed: 1,
-    chargePoints: 0,
+    // One point commissioned from the start. With none there is no way back
+    // from a flat battery, which is a dead end rather than a difficulty.
+    chargePoints: 1,
     batteryDrain: true,
 
     sound: true,
