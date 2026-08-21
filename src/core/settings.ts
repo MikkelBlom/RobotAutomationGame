@@ -26,6 +26,14 @@ export interface Settings {
 
   // Simulation
   simSpeed: number;
+  /** Charging points commissioned, counted from the south end. */
+  chargePoints: number;
+  /** Off keeps every battery full, for looking at something else. */
+  batteryDrain: boolean;
+
+  // Sound
+  sound: boolean;
+  volume: number;
 }
 
 export function defaultSettings(): Settings {
@@ -50,5 +58,10 @@ export function defaultSettings(): Settings {
     showStats: true,
 
     simSpeed: 1,
+    chargePoints: 0,
+    batteryDrain: true,
+
+    sound: true,
+    volume: 0.65,
   };
 }

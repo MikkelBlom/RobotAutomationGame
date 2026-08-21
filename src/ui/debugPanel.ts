@@ -131,11 +131,37 @@ export class DebugPanel {
 
     this.section('Robots');
     this.checkbox('order trails', s.showPaths, (v) => { s.showPaths = v; });
+    this.checkbox('battery drain', s.batteryDrain, (v) => { s.batteryDrain = v; });
+    this.slider('charge pts', 0, 10, 1, s.chargePoints, (v) => {
+      s.chargePoints = v;
+    }, (v) => `${Math.round(v)}/10`);
     this.buttons([
       ['+1', () => game.spawnBots(1)],
       ['+10', () => game.spawnBots(10)],
       ['+100', () => game.spawnBots(100)],
       ['+1000', () => game.spawnBots(1000)],
+    ]);
+
+    this.section('Sound');
+    this.checkbox('sound', s.sound, (v) => {
+      s.sound = v;
+      if (v) game.sfx.resume();
+    });
+    this.slider('volume', 0, 1, 0.02, s.volume, (v) => {
+      s.volume = v;
+      game.sfx.setVolume(v);
+    }, (v) => `${Math.round(v * 100)}%`);
+    this.buttons([
+      ['grab', () => { game.sfx.resume(); game.sfx.grab(); }],
+      ['place', () => { game.sfx.resume(); game.sfx.place(); }],
+      ['no', () => { game.sfx.resume(); game.sfx.refuse(); }],
+      ['paid', () => { game.sfx.resume(); game.sfx.money(); }],
+    ]);
+    this.buttons([
+      ['doors', () => { game.sfx.resume(); game.sfx.doors(); }],
+      ['truck', () => { game.sfx.resume(); game.sfx.truck(); }],
+      ['beep', () => { game.sfx.resume(); game.sfx.beep(); }],
+      ['charge', () => { game.sfx.resume(); game.sfx.charge(); }],
     ]);
 
     this.section('Diagnostics');

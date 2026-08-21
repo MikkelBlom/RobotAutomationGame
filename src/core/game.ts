@@ -8,6 +8,7 @@ import { BOT_LENGTH, BOT_RADIUS, BotPool, BotTask, OrderKind } from '../sim/bots
 import {
   buildLevelGeometry, PLATE_TRIGGER, SPAWN, type LevelGeometry, type Prop,
 } from '../sim/level';
+import { Sfx } from '../audio/sfx';
 import { Ledger } from '../sim/economy';
 import { NavGrid } from '../sim/navGrid';
 import { SLOT_COUNT, TrailerFleet, type Trailer } from '../sim/trailers';
@@ -50,6 +51,9 @@ export class Game {
     fps: 60, frameMs: 0, simMs: 0, drawMs: 0, sprites: 0, bots: 0, selected: 0,
   };
 
+  /** Procedural sound. Silent until the first click or keypress wakes it. */
+  readonly sfx = new Sfx();
+
   /** Shift figures, shown on the board on the north wall. */
   readonly ledger = new Ledger();
 
@@ -85,9 +89,28 @@ export class Game {
     this.renderer.setLevel(this.level);
     this.nav = new NavGrid(this.level.columns, this.level.props, this.level.bays, BOT_RADIUS);
     this.bots.onDelivered = this.onDelivered;
-    this.trailers.onDeparted = (load) => this.ledger.ship(load);
+    this.bots.onSound = (what) => {
+      if (what === 'grab') this.sfx.grab();
+      else if (what === 'place') this.sfx.place();
+      else this.sfx.charge();
+    };
+    this.trailers.onSound = (what) => {
+      if (what === 'doors') this.sfx.doors();
+      else this.sfx.truck();
+    };
+    // Browsers will not start audio without a real gesture, so it waits for one.
+    const wake = (): void => {
+      if (this.settings.sound) this.sfx.resume();
+    };
+    window.addEventListener('pointerdown', wake);
+    window.addEventListener('keydown', wake);
+    this.trailers.onDeparted = (load) => {
+      this.ledger.ship(load);
+      this.sfx.money();
+    };
     this.bots.onResolveDrop = this.resolveDrop;
     this.bots.setProps(this.level.props);
+    this.bots.setChargers(this.level.chargers);
     this.entities = new EntityRenderer(this.bots);
 
     // Start with a single machine, as asked. Snap it to walkable ground: a
@@ -209,6 +232,7 @@ export class Game {
       time,
       drawEntities: (batch, bounds) => {
         this.entities.drawBodies(batch, bounds);
+        this.entities.drawChargeSockets(batch, bounds);
         this.entities.drawLoad(batch, bounds);
       },
       drawEntityShadows: (batch, bounds) =>
@@ -218,6 +242,7 @@ export class Game {
       drawGlow: (batch, bounds) => {
         this.entities.drawGlow(batch, bounds, lighting, time);
         this.entities.drawTrails(batch, bounds, time, this.settings);
+        this.entities.drawCharge(batch, bounds, time, this.level.chargers);
       },
       ledger: this.ledger,
       drawMarks: (batch, bounds) => {
@@ -248,7 +273,11 @@ export class Game {
     this.updateCamera(dt);
     this.updateSelection();
     this.updateOrders();
-    this.bots.update(dt * this.settings.simSpeed, this.nav, this.takeProp);
+    this.applyChargeUnlocks();
+    this.updateSound(dt);
+    this.bots.update(
+      dt * this.settings.simSpeed, this.nav, this.settings.batteryDrain, this.takeProp,
+    );
   }
 
   private updateCamera(dt: number): void {
@@ -367,6 +396,52 @@ export class Game {
     }
     return false;
   };
+
+  /**
+   * Feeds the drive bed and chirps the dock beacons.
+   *
+   * The bed is one voice for the whole fleet, weighted by what is on screen —
+   * with thousands of machines a sample each would be a wall of mush, and you
+   * would not hear the one crate landing that you actually care about.
+   */
+  private updateSound(dt: number): void {
+    this.sfx.enabled = this.settings.sound;
+    if (!this.settings.sound) {
+      this.sfx.drive(0, 0);
+      return;
+    }
+    const bounds = this.camera.visibleBounds(this.viewport);
+    let moving = 0;
+    let paceSum = 0;
+    for (let i = 0; i < this.bots.count; i++) {
+      if (this.bots.velocity[i] < 12) continue;
+      const x = this.bots.x[i];
+      const y = this.bots.y[i];
+      if (x < bounds.x0 || x > bounds.x1 || y < bounds.y0 || y > bounds.y1) continue;
+      moving++;
+      paceSum += this.bots.velocity[i] / this.bots.speed[i];
+    }
+    // Saturates quickly: eight machines working already sounds like a shift.
+    const activity = moving === 0 ? 0 : Math.min(1, 0.35 + moving / 8);
+    this.sfx.drive(activity, moving === 0 ? 0 : paceSum / moving);
+
+    // One chirp per beacon flash, while any dock is warning.
+    let warning = false;
+    for (const t of this.trailers.trailers) if (t.alarm > 0.4) warning = true;
+    this.beaconChirp = warning ? this.beaconChirp + dt : 0;
+    if (warning && this.beaconChirp > 0.74) {
+      this.beaconChirp = 0;
+      this.sfx.beep();
+    }
+  }
+
+  private beaconChirp = 0;
+
+  /** Commissions charging points from the south end, per the debug setting. */
+  private applyChargeUnlocks(): void {
+    const n = this.settings.chargePoints;
+    for (const pad of this.level.chargers) pad.unlocked = pad.index < n;
+  }
 
   /** Whether a robot is standing on the dispatch plate for a bay. */
   private plateHeld = (bayX: number): boolean => {
@@ -602,10 +677,14 @@ export class Game {
         canLift(this.bots.hauler[i] as HaulerClassValue, prop.material, prop.shape);
       const free = nearest((i) => rated(i) && this.bots.carryMaterial[i] < 0);
       const able = free >= 0 ? free : nearest(rated);
-      if (able >= 0) {
-        if (!shift && this.bots.isBusy(able)) this.bots.clearQueue(able);
-        this.bots.orderFetch(able, propIndex, prop, this.nav, shift || this.bots.isBusy(able));
+      if (able < 0 || this.bots.isFlat(able)) {
+        // Nothing on the roster can take it. No words for that — just the noise
+        // a machine makes when it will not do the thing.
+        this.sfx.refuse();
+        return;
       }
+      if (!shift && this.bots.isBusy(able)) this.bots.clearQueue(able);
+      this.bots.orderFetch(able, propIndex, prop, this.nav, shift || this.bots.isBusy(able));
       return;
     }
 

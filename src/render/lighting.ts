@@ -66,10 +66,10 @@ export function pushCastShadow(
  * winning.
  */
 /** Cable thickness on the floor. Thin enough to read as conduit, not a stripe. */
-const PLATE_WIRE_WIDTH = 26;
+const PLATE_WIRE_WIDTH = 62;
 /** Charging cabinet footprint. */
 const DOCK_SIZE = 300;
-const BEACON_SIZE = 150;
+const BEACON_SIZE = 190;
 
 /**
  * Beacon flash: a hard on-off with a short tail, not a sine.
@@ -328,18 +328,24 @@ export class LightingPass {
       if (!visible(bounds, plate.x, plate.y, plate.size * 3)) continue;
       const trailer = fleet.trailers.find((t) => t.bay.x === plate.bayX);
 
-      // Cable: north out of the plate into the wall band, then west along it to
-      // the door post. Two runs, drawn as one long sprite each.
-      const runY = SHELL.y0 + WALL_THICKNESS * 0.62;
-      const upLength = plate.y - runY;
+      // Cable: north out of the plate to the wall, then west along it to the
+      // door post. The runs stop short of the corner and a square patch fills
+      // it, so the elbow is a join rather than two sticks crossing.
+      const runY = SHELL.y0 + WALL_THICKNESS * 0.58;
+      const half = PLATE_WIRE_WIDTH / 2;
+      const upLength = plate.y - runY - half;
       batch.pushRegion(
-        REGIONS.plateWire, plate.x, (plate.y + runY) / 2, Math.PI / 2,
+        REGIONS.plateWire, plate.x, (plate.y + runY + half) / 2, Math.PI / 2,
         upLength, PLATE_WIRE_WIDTH, 1, 1, 1, 1,
       );
-      const acrossLength = Math.abs(plate.x - plate.wireX);
+      const acrossLength = Math.abs(plate.x - plate.wireX) - half;
       batch.pushRegion(
-        REGIONS.plateWire, (plate.x + plate.wireX) / 2, runY, 0,
-        acrossLength + PLATE_WIRE_WIDTH, PLATE_WIRE_WIDTH, 1, 1, 1, 1,
+        REGIONS.plateWire, (plate.x - half + plate.wireX) / 2, runY, 0,
+        acrossLength, PLATE_WIRE_WIDTH, 1, 1, 1, 1,
+      );
+      batch.pushRegion(
+        REGIONS.plateWire, plate.x, runY, 0,
+        PLATE_WIRE_WIDTH, PLATE_WIRE_WIDTH, 1, 1, 1, 1,
       );
 
       // The pad sinks and darkens under a robot, which is the only feedback
@@ -368,12 +374,12 @@ export class LightingPass {
     for (const plate of this.level.plates) {
       const trailer = fleet.trailers.find((t) => t.bay.x === plate.bayX);
       if (!trailer || trailer.alarm < 0.02) continue;
-      const runY = SHELL.y0 + WALL_THICKNESS * 0.62;
+      const runY = SHELL.y0 + WALL_THICKNESS * 0.58;
       if (!visible(bounds, plate.wireX, runY, 1400)) continue;
       const flash = trailer.alarm * beaconFlash(time);
       batch.pushRegion(
-        REGIONS.radial, plate.wireX, runY + 180, 0, 1900, 1900,
-        1.0, 0.16, 0.12, flash * 0.55,
+        REGIONS.radial, plate.wireX, runY + 220, 0, 1500, 1500,
+        1.0, 0.17, 0.13, flash * 0.42,
       );
     }
   }
@@ -385,13 +391,13 @@ export class LightingPass {
     for (const plate of this.level.plates) {
       const trailer = fleet.trailers.find((t) => t.bay.x === plate.bayX);
       if (!trailer || trailer.alarm < 0.02) continue;
-      const runY = SHELL.y0 + WALL_THICKNESS * 0.62;
+      const runY = SHELL.y0 + WALL_THICKNESS * 0.58;
       if (!visible(bounds, plate.wireX, runY, 700)) continue;
       const flash = trailer.alarm * beaconFlash(time);
-      const size = BEACON_SIZE * (2.1 + flash * 0.7);
+      const size = BEACON_SIZE * (1.5 + flash * 0.55);
       batch.pushRegion(
         REGIONS.warnGlow, plate.wireX, runY, 0, size, size,
-        1, 1, 1, 0.25 + flash * 0.75,
+        1, 1, 1, 0.22 + flash * 0.78,
       );
     }
   }

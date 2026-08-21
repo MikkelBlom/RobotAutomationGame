@@ -50,6 +50,11 @@
 | Ship on departure | Implemented | Crates and money count when the truck pulls out, not when loaded | 2026-08-21 | ledger |
 | Charging run, east wall | Implemented | Ten points, numbered from the south, all sealed; unlocking is a flag | 2026-08-21 | — |
 | Robot battery / charging behaviour | Planned | The run exists as furniture; nothing drains or docks yet | — | charging run |
+| Robot battery + on-hull readout | Implemented | Lit bar on the nose; colour and length follow charge, no UI element | 2026-08-21 | — |
+| Flat-battery behaviour | Implemented | 16% speed, refuses to lift, still drivable | 2026-08-21 | battery |
+| Charging at a live point | Implemented | Park on it; settles square, fills in 20s, feed pulses from the cabinet | 2026-08-21 | charging run |
+| Procedural sound | Implemented | Synthesised; one fleet-wide drive bed plus throttled one-shots | 2026-08-21 | — |
+| Buying a charging point | Planned | Nothing spends revenue yet, so flat is currently unrecoverable | — | charging run |
 | Long hauler / big hauler / heavy hauler | Planned | Needed for 1x2, 2x2 and steel crates respectively | — | hauler class gating |
 | Bays 1-3 unlock | Planned | Presumably a progression cost | — | one bay unlocked |
 | Flying robots | Planned | Must ignore terrain/congestion, cost energy | — | — |

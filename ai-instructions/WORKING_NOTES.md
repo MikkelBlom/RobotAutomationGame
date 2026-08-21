@@ -350,3 +350,62 @@ is authored with its connector towards +x and drawn rotated by π on the east
 wall. Authoring it already-facing-west would have worked today and been wrong the
 first time a point goes on another wall. Same reason the floor pad is drawn
 closed at +x, open at -x: the bay is something to reverse into.
+
+## Power, sound, and a nav deadlock (2026-08-21, evening)
+
+**Nav and the overlap resolver disagreed by 36 cm, and that was a deadlock.**
+The nav grid clears cargo using the robot's CIRCULAR radius (84) while
+`resolvePropOverlap` pushes using the full hull rectangle (half-length 120).
+Anything parked between those two numbers is somewhere nav calls walkable and
+the resolver shoves out of, so the robot oscillates there forever. A fetch
+standoff lands squarely in that band — which is exactly why it hung on one
+particular crate and not its neighbours, and why the rotation seemed to matter:
+it only bites when the hull's long axis points at the crate.
+
+Three fixes, each needed:
+- The crate a robot is working on never pushes it, at ANY phase (it used to be
+  exempt only once the arms were out).
+- `orderMove` runs its destination through `parkable()`, which shoves it clear
+  of that band. Passing THROUGH the band is fine — a shove across the line of
+  travel is what the separation pass is for. Stopping in it is what deadlocks.
+- `STALL_LIMIT`: any drive that stops closing on its waypoint for 2.5 s gives
+  the order up. A backstop, not the fix.
+
+Swept afterwards: 174 fetches from six start points and 208 move orders aimed
+deliberately inside the band, all clean.
+
+**A gradient must reach zero inside its atlas cell.** The beacon glow ran its
+gradient to 1.44x the cell, so it was clipped square at a still-bright alpha —
+that is the "big square light". Same trap for anything drawn with
+`createRadialGradient` into a cell.
+
+**Sprite art must fill the quad it is drawn at.** The charge strip was authored
+at 28% of its cell height and drawn on a 26 cm quad, so it rendered as a 7 cm
+hairline. The cable had the same fault at 10%. If a sprite looks thin, check
+what fraction of the cell the art occupies before touching the draw size.
+
+**An unlit fitting cannot go in the glow pass.** The charge readout's socket is a
+dark recess; pushed into an additive pass it contributes nothing and simply is
+not there. Albedo for the recess, glow for the light inside it.
+
+**`&&` where `||` was meant.** `drawFeed` looked up its charging point with
+`if (|dx| > W && |dy| > H) continue;` — since every point shares an x, the guard
+never fired and all three robots drew their feed at point zero. Two-axis box
+tests reject on EITHER axis.
+
+**The battery readout is a fleet instrument, not a gauge.** At the zoom where a
+hundred machines are on screen each is a few pixels, so COLOUR carries the
+meaning and the bar length is the detail you get when you lean in. Green to
+amber to red, flat machines breathing a dull red. Two sprites per robot; 2000
+robots measured at sim 3.23 ms, draw 2.19 ms.
+
+**Sound is procedural and never per-robot.** `src/audio/sfx.ts` synthesises
+everything from oscillators and one shared noise buffer — no assets to keep in
+sync, same reasoning as the canvas-drawn art. The drive noise is ONE bed whose
+level follows how much of the fleet is working on screen; a voice per machine
+would be thousands of voices and a wall of mush. One-shots are throttled per
+voice so twenty crates landing in a frame is one sound. Audio cannot start
+without a real input event, so it waits for the first pointerdown or keydown.
+
+**Refusals have a sound now, not words.** That is the only feedback a refused
+order gets, and it is consistent with the no-text-UI rule.

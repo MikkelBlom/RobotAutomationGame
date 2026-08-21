@@ -76,6 +76,8 @@ export class TrailerFleet {
    * the moment a load actually counts as shipped.
    */
   onDeparted: ((load: Trailer['cargo']) => void) | null = null;
+  /** Something happened worth hearing: doors moving, or a trailer on the road. */
+  onSound: ((what: 'doors' | 'truck') => void) | null = null;
   private readonly rng: Rng;
 
   constructor(bays: DockBay[], seed: number) {
@@ -144,6 +146,7 @@ export class TrailerFleet {
           if (t.awayHours <= 0) {
             // A fresh trailer, empty.
             t.cargo.fill(null);
+            this.onSound?.('truck');
             this.enter(t, TrailerState.Arriving);
           }
           break;
@@ -152,7 +155,10 @@ export class TrailerFleet {
           // Eased so it slows as it comes onto the bumpers.
           const p = Math.min(1, t.elapsed / ARRIVE_TIME);
           t.dock = 1 - (1 - p) * (1 - p);
-          if (p >= 1) this.enter(t, TrailerState.Opening);
+          if (p >= 1) {
+            this.onSound?.('doors');
+            this.enter(t, TrailerState.Opening);
+          }
           break;
         }
 
@@ -173,6 +179,7 @@ export class TrailerFleet {
           // loaded, not on a timer — and never while a robot is still aboard.
           if ((sent || TrailerFleet.isFull(t)) && !occupiedByRobot(t.bay.x)) {
             t.dispatch = 0;
+            this.onSound?.('doors');
             this.enter(t, TrailerState.Closing);
           }
           break;
@@ -190,6 +197,7 @@ export class TrailerFleet {
           if (t.elapsed >= CLOSE_TIME) {
             // Doors shut and rolling: the load has left the building.
             this.onDeparted?.(t.cargo);
+            this.onSound?.('truck');
             this.enter(t, TrailerState.Leaving);
           }
           break;

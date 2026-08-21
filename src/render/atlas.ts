@@ -95,6 +95,11 @@ const CELLS = {
   /** The beacon's lens, for the emissive pass. */
   warnGlow: [0, 1024, 256, 256],
 
+  /** Charge readout on a robot's deck. Tinted and scaled at draw time. */
+  chargeStrip: [1280, 1024, 256, 256],
+  /** Recess the strip sits in, so it reads as a fitting when unlit. */
+  chargeSocket: [1536, 1024, 256, 256],
+
   /** Charging cabinet, live. Connector faces +x. */
   chargeDock: [256, 1024, 256, 256],
   /** The same cabinet still sealed from the factory. */
@@ -203,6 +208,7 @@ export function buildAtlas(seed: number): HTMLCanvasElement {
   drawTrailerDoor(ctx);
   drawCrateVariants(ctx, seed);
   drawCrateOutline(ctx);
+  drawChargeStrip(ctx);
   drawChargeDock(ctx, false);
   drawChargeDock(ctx, true);
   drawChargePad(ctx, makeRng(seed ^ 0x2f19));
@@ -1229,61 +1235,106 @@ function drawDockPlate(ctx: CanvasRenderingContext2D, rng: ReturnType<typeof mak
   ctx.restore();
 }
 
-/** Armoured cable. Spans the cell edge to edge so runs can be laid end to end. */
+/**
+ * Armoured cable, spanning the cell edge to edge so runs butt together.
+ *
+ * Clipped to the floor at intervals rather than banded: a plain dark line reads
+ * as a drawing mistake, a cable with fixings reads as something installed.
+ */
 function drawPlateWire(ctx: CanvasRenderingContext2D): void {
   const { size } = cell(ctx, 'plateWire');
   const half = size / 2;
-  const t = size * 0.115;
-  ctx.fillStyle = '#15171a';
+  // The cable has to fill most of the quad: drawn at a tenth of the cell it
+  // came out a hairline on the floor and the clips were invisible.
+  const t = size * 0.30;
+
+  ctx.fillStyle = '#191c20';
   ctx.fillRect(-half, -t / 2, size, t);
-  ctx.fillStyle = 'rgba(120,130,140,0.22)';
-  ctx.fillRect(-half, -t / 2, size, t * 0.28);
-  // Banding, so a long run does not read as a plain drawn line.
-  ctx.fillStyle = 'rgba(0,0,0,0.45)';
-  for (let x = -half; x < half; x += size * 0.1) {
-    ctx.fillRect(x, -t / 2, size * 0.022, t);
+  ctx.fillStyle = 'rgba(150,162,174,0.20)';
+  ctx.fillRect(-half, -t / 2 + t * 0.12, size, t * 0.22);
+  ctx.fillStyle = 'rgba(0,0,0,0.40)';
+  ctx.fillRect(-half, t / 2 - t * 0.24, size, t * 0.24);
+
+  // Saddle clips, straddling the cable and pinned either side.
+  for (let i = 0; i < 3; i++) {
+    const x = -half + size * (0.18 + i * 0.32);
+    ctx.fillStyle = '#4a5058';
+    ctx.fillRect(x - t * 0.22, -t * 0.92, t * 0.44, t * 1.84);
+    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    ctx.fillRect(x - t * 0.22, t * 0.62, t * 0.44, t * 0.30);
+    ctx.fillStyle = '#2a2e33';
+    ctx.beginPath();
+    ctx.arc(x, -t * 0.72, t * 0.13, 0, TAU);
+    ctx.arc(x, t * 0.72, t * 0.13, 0, TAU);
+    ctx.fill();
   }
   ctx.restore();
 }
 
-/** Warning beacon: dark housing for the albedo pass. */
+/**
+ * Warning beacon: a compact unit bolted flat to the wall.
+ *
+ * Was a bare circle with a spoked cage across it, which read as a hazard symbol
+ * rather than a light fitting. A base plate under a small domed lens does the
+ * job at a fraction of the size.
+ */
 function drawWarnLamp(ctx: CanvasRenderingContext2D): void {
   const { size } = cell(ctx, 'warnLamp');
-  const r = size * 0.30;
-  ctx.fillStyle = '#202429';
+  const bw = size * 0.34;
+  const bh = size * 0.23;
+
+  // Base plate.
+  ctx.fillStyle = '#2b3036';
   ctx.beginPath();
-  ctx.arc(0, 0, r * 1.32, 0, TAU);
+  ctx.roundRect(-bw, -bh, bw * 2, bh * 2, 5);
   ctx.fill();
-  ctx.fillStyle = '#3a1418';
+  ctx.strokeStyle = 'rgba(10,12,14,0.7)';
+  ctx.lineWidth = 4;
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,0.09)';
+  ctx.fillRect(-bw + 4, -bh + 4, bw * 2 - 8, 5);
+  ctx.fillStyle = '#1a1d21';
+  for (const sx of [-1, 1]) {
+    ctx.beginPath();
+    ctx.arc(sx * (bw - 7), 0, 4, 0, TAU);
+    ctx.fill();
+  }
+
+  // Lens: a small dome, dark until the emissive pass lights it.
+  const r = size * 0.115;
+  ctx.fillStyle = '#15171a';
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 1.35, 0, TAU);
+  ctx.fill();
+  const lens = ctx.createRadialGradient(-r * 0.3, -r * 0.35, 0, 0, 0, r);
+  lens.addColorStop(0, '#7a2a28');
+  lens.addColorStop(0.65, '#4a1618');
+  lens.addColorStop(1, '#2a0d10');
+  ctx.fillStyle = lens;
   ctx.beginPath();
   ctx.arc(0, 0, r, 0, TAU);
   ctx.fill();
-  ctx.strokeStyle = 'rgba(0,0,0,0.6)';
-  ctx.lineWidth = 5;
+  ctx.fillStyle = 'rgba(255,220,215,0.16)';
   ctx.beginPath();
-  ctx.arc(0, 0, r * 1.32, 0, TAU);
-  ctx.stroke();
-  // Cage bars, so it reads as industrial rather than a button.
-  ctx.strokeStyle = 'rgba(20,22,25,0.85)';
-  ctx.lineWidth = 6;
-  ctx.beginPath();
-  for (let i = 0; i < 3; i++) {
-    const a = (i / 3) * Math.PI;
-    ctx.moveTo(Math.cos(a) * r, Math.sin(a) * r);
-    ctx.lineTo(-Math.cos(a) * r, -Math.sin(a) * r);
-  }
-  ctx.stroke();
+  ctx.ellipse(-r * 0.3, -r * 0.36, r * 0.42, r * 0.26, -0.5, 0, TAU);
+  ctx.fill();
   ctx.restore();
 
+  // The lit lens. The gradient has to reach zero INSIDE the cell — running it
+  // past the edge clips a bright ring square, which is why the beacon used to
+  // throw a hard-edged red box across the bay.
   const g = cell(ctx, 'warnGlow');
-  const gr = g.size * 0.30;
-  const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, gr * 2.4);
-  grad.addColorStop(0, 'rgba(255,255,255,1)');
-  grad.addColorStop(0.22, 'rgba(255,120,110,0.95)');
-  grad.addColorStop(0.5, 'rgba(255,40,40,0.34)');
-  grad.addColorStop(1, 'rgba(255,20,20,0)');
+  const gr = g.size * 0.5;
+  const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, gr);
+  grad.addColorStop(0, 'rgba(255,244,240,1)');
+  grad.addColorStop(0.10, 'rgba(255,150,132,0.92)');
+  grad.addColorStop(0.26, 'rgba(255,58,44,0.42)');
+  grad.addColorStop(0.55, 'rgba(228,24,20,0.12)');
+  grad.addColorStop(1, 'rgba(190,14,12,0)');
   ctx.fillStyle = grad;
-  ctx.fillRect(-gr * 2.4, -gr * 2.4, gr * 4.8, gr * 4.8);
+  ctx.beginPath();
+  ctx.arc(0, 0, gr, 0, TAU);
+  ctx.fill();
   ctx.restore();
 }
 
@@ -1536,5 +1587,47 @@ function drawChargeGlow(ctx: CanvasRenderingContext2D): void {
   grad.addColorStop(1, 'rgba(20,180,120,0)');
   ctx.fillStyle = grad;
   ctx.fillRect(-r, -r, r * 2, r * 2);
+  ctx.restore();
+}
+
+/**
+ * The charge readout carried by every robot.
+ *
+ * It has to work as a fleet-wide readout, not a gauge you inspect: at the zoom
+ * where a hundred machines are on screen each one is a few pixels, so the
+ * COLOUR has to carry the meaning and the length is the detail you get when you
+ * lean in. Hence a plain lit bar rather than pips or a ring.
+ */
+function drawChargeStrip(ctx: CanvasRenderingContext2D): void {
+  const strip = cell(ctx, 'chargeStrip');
+  const w = strip.size * 0.45;
+  const h = strip.size * 0.36;
+  const grad = ctx.createLinearGradient(0, -h, 0, h);
+  grad.addColorStop(0, 'rgba(255,255,255,0.72)');
+  grad.addColorStop(0.42, 'rgba(255,255,255,1)');
+  grad.addColorStop(1, 'rgba(255,255,255,0.55)');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.roundRect(-w, -h, w * 2, h * 2, h);
+  ctx.fill();
+  // Cell divisions: enough to read as a gauge close up, invisible far away.
+  ctx.globalCompositeOperation = 'destination-out';
+  ctx.fillStyle = '#000';
+  for (let i = 1; i < 5; i++) {
+    ctx.fillRect(-w + (i * w * 2) / 5 - h * 0.11, -h, h * 0.22, h * 2);
+  }
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.restore();
+
+  const socket = cell(ctx, 'chargeSocket');
+  const sw = socket.size * 0.48;
+  const sh = socket.size * 0.42;
+  ctx.fillStyle = '#14161a';
+  ctx.beginPath();
+  ctx.roundRect(-sw, -sh, sw * 2, sh * 2, sh * 0.6);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(140,150,162,0.30)';
+  ctx.lineWidth = 3;
+  ctx.stroke();
   ctx.restore();
 }

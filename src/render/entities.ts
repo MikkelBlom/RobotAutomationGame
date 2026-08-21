@@ -4,7 +4,7 @@ import { BOT_LENGTH, BOT_RADIUS, BOT_WIDTH, BotState, BotTask, type BotPool } fr
 import { BOT_ART, REGIONS } from './atlas';
 import { crateQuad, crateRegion, outlineQuad } from './crateArt';
 import type { CrateMaterialValue, CrateShapeValue } from '../sim/cargo';
-import { FLOOR } from '../sim/level';
+import { CHARGE_PAD_H, CHARGE_PAD_W, FLOOR, type ChargePad } from '../sim/level';
 import { pushCastShadow, type Bounds } from './lighting';
 import type { SpriteBatch } from './spriteBatch';
 
@@ -72,6 +72,27 @@ export interface PlanMark {
 
 /** How far inside the slab a queued leg turns before heading into a bay. */
 const DOORWAY_INSET = 260;
+
+/** Charge readout geometry, in centimetres on the hull. */
+const STRIP_LENGTH = 96;
+const STRIP_WIDTH = 30;
+const STRIP_FORWARD = 74;
+/** How far inside the cabinet the feed appears to leave from. */
+const FEED_INSET = 120;
+const FEED_PULSES = 3;
+
+const CHARGE_FULL = { r: 0.42, g: 1.0, b: 0.56 };
+const CHARGE_MID = { r: 1.0, g: 0.80, b: 0.24 };
+const CHARGE_LOW = { r: 1.0, g: 0.28, b: 0.20 };
+const FLAT_TINT = { r: 0.72, g: 0.14, b: 0.12 };
+
+function mixTint(
+  a: { r: number; g: number; b: number },
+  c: { r: number; g: number; b: number },
+  t: number,
+): { r: number; g: number; b: number } {
+  return { r: a.r + (c.r - a.r) * t, g: a.g + (c.g - a.g) * t, b: a.b + (c.b - a.b) * t };
+}
 
 const MAX_TRAIL_DOTS = 4000;
 
@@ -227,6 +248,120 @@ export class EntityRenderer {
           batch.pushRegion(region, cx, cy, b.angle[i], q.w * rise, q.h * rise, 1, 1, 1, 1);
         }
       }
+    }
+  }
+
+  /**
+   * The charge readout on every robot, into the emissive pass.
+   *
+   * Green down to amber down to red as it empties, and a flat machine pulses a
+   * dull red so a stopped fleet is obvious at a glance. Charging runs a bright
+   * band along the strip. Nothing about this is a UI element — with thousands of
+   * machines working there is nowhere to put one.
+   */
+  drawCharge(
+    batch: SpriteBatch, bounds: Bounds, time: number, chargers: ReadonlyArray<ChargePad>,
+  ): void {
+    const b = this.bots;
+    for (let i = 0; i < b.count; i++) {
+      if (!visible(bounds, b.x[i], b.y[i], BOT_LENGTH)) continue;
+      const cos = Math.cos(b.angle[i]);
+      const sin = Math.sin(b.angle[i]);
+      // Across the hull, forward of centre, where nothing else sits.
+      const cx = b.x[i] + cos * STRIP_FORWARD;
+      const cy = b.y[i] + sin * STRIP_FORWARD;
+      const across = b.angle[i] + Math.PI / 2;
+
+      const level = b.battery[i];
+      const flat = level <= 0.001;
+      const tint = flat
+        ? FLAT_TINT
+        : level > 0.5
+          ? mixTint(CHARGE_MID, CHARGE_FULL, (level - 0.5) * 2)
+          : mixTint(CHARGE_LOW, CHARGE_MID, level * 2);
+      // A flat robot breathes; a low one blinks; a healthy one is steady.
+      const pulse = flat
+        ? 0.30 + 0.30 * Math.sin(time * 2.0 + b.phase[i])
+        : level < 0.22
+          ? 0.62 + 0.38 * Math.max(0, Math.sin(time * 5.5 + b.phase[i]))
+          : 1;
+
+      const filled = Math.max(0.07, level) * STRIP_LENGTH;
+      // Grows from the left-hand end rather than the middle, so a draining bar
+      // reads as draining and not as shrinking.
+      const shift = (filled - STRIP_LENGTH) * 0.5;
+      batch.pushRegion(
+        REGIONS.chargeStrip,
+        cx + Math.cos(across) * shift, cy + Math.sin(across) * shift, across,
+        filled, STRIP_WIDTH, tint.r, tint.g, tint.b, pulse,
+      );
+
+      if (b.charging[i]) {
+        // A band running the length of the strip while it fills.
+        const sweep = (time * 1.5) % 1;
+        const at = (sweep - 0.5) * STRIP_LENGTH;
+        batch.pushRegion(
+          REGIONS.chargeStrip,
+          cx + Math.cos(across) * at, cy + Math.sin(across) * at, across,
+          STRIP_LENGTH * 0.22, STRIP_WIDTH * 1.25,
+          CHARGE_FULL.r, CHARGE_FULL.g, CHARGE_FULL.b, 0.85,
+        );
+        this.drawFeed(batch, b.x[i], b.y[i], chargers, time);
+      }
+    }
+  }
+
+  /**
+   * Charge running from the cabinet into the robot: a run of pulses down the
+   * gap. Cheaper and steadier to read than an arc, and it says which way the
+   * power is going, which an arc does not.
+   */
+  private drawFeed(
+    batch: SpriteBatch,
+    botX: number,
+    botY: number,
+    chargers: ReadonlyArray<ChargePad>,
+    time: number,
+  ): void {
+    let pad: ChargePad | undefined;
+    for (const p of chargers) {
+      if (!p.unlocked) continue;
+      if (Math.abs(botX - p.x) > CHARGE_PAD_W || Math.abs(botY - p.y) > CHARGE_PAD_H) continue;
+      pad = p;
+      break;
+    }
+    if (!pad) return;
+    const fromX = pad.dockX - FEED_INSET;
+    const span = fromX - botX;
+    if (Math.abs(span) < 20) return;
+    for (let k = 0; k < FEED_PULSES; k++) {
+      // Travelling from the wall towards the machine.
+      const t = ((time * 0.9 + k / FEED_PULSES) % 1);
+      const fade = Math.sin(t * Math.PI);
+      const size = 26 + fade * 18;
+      batch.pushRegion(
+        REGIONS.dot, fromX - span * t, pad.y, 0, size, size,
+        CHARGE_FULL.r, CHARGE_FULL.g, CHARGE_FULL.b, fade * 0.85,
+      );
+    }
+  }
+
+  /**
+   * The recess the charge readout sits in. Albedo, not glow: a dark fitting
+   * pushed into an additive pass contributes nothing and simply is not there.
+   */
+  drawChargeSockets(batch: SpriteBatch, bounds: Bounds): void {
+    const b = this.bots;
+    for (let i = 0; i < b.count; i++) {
+      if (!visible(bounds, b.x[i], b.y[i], BOT_LENGTH)) continue;
+      const cos = Math.cos(b.angle[i]);
+      const sin = Math.sin(b.angle[i]);
+      batch.pushRegion(
+        REGIONS.chargeSocket,
+        b.x[i] + cos * STRIP_FORWARD, b.y[i] + sin * STRIP_FORWARD,
+        b.angle[i] + Math.PI / 2, STRIP_LENGTH * 1.12, STRIP_WIDTH * 1.2,
+        1, 1, 1, 1,
+      );
     }
   }
 

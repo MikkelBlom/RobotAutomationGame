@@ -166,3 +166,37 @@ while loading, untouched by the departure.
 Not done: nothing was cut. There is still no charging BEHAVIOUR — no battery, no
 docking, no drain. The run is furniture with a working unlocked/locked flag and
 the lit state already wired, waiting for whatever powers it.
+
+---
+
+## 2026-08-21 — Claude Code (Opus 5) — batteries, sound, and a nav deadlock
+
+**Nav deadlock found and fixed.** Reproduced by sweeping every liftable crate
+from six start points: one crate at 40 degrees hung reliably. Root cause and the
+three-part fix are in WORKING_NOTES ("Nav and the overlap resolver disagreed").
+Swept clean afterwards: 174 fetches, 208 move orders aimed into the bad band.
+
+**Battery.** `bots.battery` 0..1, drained by driving (scaled by speed), idling
+and each lift. Measured 0.0181 per crate end to end, so a full charge is about
+55 crates or four and a half truckloads. Flat robots run at 16% speed (measured
+5.6x slower over 30 m) and `startFetch` refuses them. Readout is two sprites on
+the nose: a dark socket in the albedo pass and a lit bar in the glow pass, length
+and colour both following charge.
+
+**Charging.** Positional, no docking sequence: park on a commissioned point and
+it fills at 1/20 per second, settling square with its nose to the cabinet. Feed
+pulses run from the cabinet into the machine while it charges. Debug panel got
+`charge pts` (0-10) and `battery drain`.
+
+**Sound.** `src/audio/sfx.ts`, fully procedural. grab / place / refuse / money /
+doors / truck / beep / charge one-shots plus a single fleet-wide drive bed.
+Debug panel has sound on/off, volume, and a button per voice.
+
+**Beacon and cable redrawn.** The square red light was a gradient overflowing its
+atlas cell. The beacon is now a small base-plate-and-lens unit instead of a caged
+circle, and the cable is thicker with saddle clips and a proper corner join.
+
+Not done: nothing was cut. The open question is in the handoff — with zero
+charging points commissioned by default there is no way back from a flat battery.
+Drain was slowed to roughly three in-game days to keep that a long way off, but
+it is a real dead end until a point can be bought.

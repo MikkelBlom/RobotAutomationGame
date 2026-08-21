@@ -2,6 +2,7 @@ import { angleDelta, clamp, TAU } from '../core/mathUtils';
 import { CRATE_UNIT, canLift, HaulerClass, type HaulerClassValue } from './cargo';
 import type { Prop } from './level';
 import type { NavGrid } from './navGrid';
+import { CHARGE_PAD_H, CHARGE_PAD_W, type ChargePad } from './level';
 
 /**
  * Ground robots.
@@ -62,6 +63,29 @@ const GRAB_GAP = 26;
  * A real brake curve runs flat out until it genuinely has to slow down.
  */
 const DECEL = 1100;
+/** How long a robot may make no headway before its order is abandoned. */
+const STALL_LIMIT = 2.5;
+
+/**
+ * Battery, as a fraction per second.
+ *
+ * A full charge is about three in-game days of steady hauling. Deliberately
+ * slow: with no charging point commissioned there is no way back from flat, so
+ * until one can be bought this has to be a thing you watch creeping down rather
+ * than a wall you hit in the first shift.
+ */
+const DRAIN_DRIVING = 1 / 1600;
+const DRAIN_IDLE = 1 / 9000;
+/** One grab costs as much as several seconds of driving. */
+const DRAIN_PER_LIFT = 0.010;
+/** A point fills a robot in about twenty seconds. */
+const CHARGE_RATE = 1 / 20;
+/** Below this a robot is dead: it crawls, and it will not lift anything. */
+export const BATTERY_DEAD = 0.001;
+/** What a flat robot can still manage, as a fraction of its rated speed. */
+const DEAD_SPEED = 0.16;
+/** Nose east, into the cabinet: the charge strip is on the front of the hull. */
+const DOCK_FACING = 0;
 /** How hard acceleration chases the target speed. */
 const ACCEL_RESPONSE = 9;
 
@@ -108,6 +132,14 @@ export class BotPool {
   readonly goalY: Float32Array;
   readonly state: Uint8Array;
   readonly selected: Uint8Array;
+  /** Charge remaining, 0 to 1. */
+  readonly battery: Float32Array;
+  /** 1 while sitting on a live charging point. */
+  readonly charging: Uint8Array;
+  /** Seconds spent not getting any closer to the current waypoint. */
+  readonly stallTime: Float32Array;
+  /** Distance to the waypoint last frame, for detecting a stall. */
+  readonly lastGap: Float32Array;
   /** Smoothed travel speed, for track animation and light dimming. */
   readonly velocity: Float32Array;
   readonly phase: Float32Array;
@@ -153,6 +185,7 @@ export class BotPool {
    * Only robots actually under orders carry a path, and you command squads, not
    * the whole fleet — so a sparse map costs far less than a per-robot buffer.
    */
+  private chargers: ChargePad[] = [];
   private readonly paths = new Map<number, ActivePath>();
 
   /**
@@ -169,6 +202,8 @@ export class BotPool {
    * null when there is nowhere to put it — no trailer docked, or it is full.
    */
   onResolveDrop: ((bot: number) => { slot: number; x: number; y: number } | null) | null = null;
+  /** Something happened worth hearing. Called at most once per event, per robot. */
+  onSound: ((what: 'grab' | 'place' | 'charge') => void) | null = null;
 
   // Spatial hash for neighbour lookups during separation.
   private readonly hashCell = 300;
@@ -189,6 +224,10 @@ export class BotPool {
     this.goalY = new Float32Array(capacity);
     this.state = new Uint8Array(capacity);
     this.selected = new Uint8Array(capacity);
+    this.battery = new Float32Array(capacity);
+    this.charging = new Uint8Array(capacity);
+    this.stallTime = new Float32Array(capacity);
+    this.lastGap = new Float32Array(capacity);
     this.velocity = new Float32Array(capacity);
     this.phase = new Float32Array(capacity);
     this.odometer = new Float32Array(capacity);
@@ -234,6 +273,8 @@ export class BotPool {
     this.carryMaterial[i] = -1;
     this.carryShape[i] = 0;
     this.hauler[i] = HaulerClass.Standard;
+    this.battery[i] = 1;
+    this.charging[i] = 0;
     this.placeSlot[i] = -1;
     this.approachX[i] = 1;
     this.approachY[i] = 0;
@@ -260,6 +301,12 @@ export class BotPool {
     (this as { goalY: Float32Array }).goalY = copy(this.goalY, (n) => new Float32Array(n));
     (this as { state: Uint8Array }).state = copy(this.state, (n) => new Uint8Array(n));
     (this as { selected: Uint8Array }).selected = copy(this.selected, (n) => new Uint8Array(n));
+    (this as { battery: Float32Array }).battery = copy(this.battery, (n) => new Float32Array(n));
+    const nextCharging = new Uint8Array(next);
+    nextCharging.set(this.charging);
+    (this as { charging: Uint8Array }).charging = nextCharging;
+    (this as { stallTime: Float32Array }).stallTime = copy(this.stallTime, (n) => new Float32Array(n));
+    (this as { lastGap: Float32Array }).lastGap = copy(this.lastGap, (n) => new Float32Array(n));
     (this as { velocity: Float32Array }).velocity = copy(this.velocity, (n) => new Float32Array(n));
     (this as { phase: Float32Array }).phase = copy(this.phase, (n) => new Float32Array(n));
     (this as { odometer: Float32Array }).odometer = copy(this.odometer, (n) => new Float32Array(n));
@@ -292,6 +339,16 @@ export class BotPool {
     nextTarget.set(this.targetProp);
     (this as { targetProp: Int32Array }).targetProp = nextTarget;
     this.capacity = next;
+  }
+
+  /** Charging points the fleet can draw from. Only live ones do anything. */
+  setChargers(pads: ChargePad[]): void {
+    this.chargers = pads;
+  }
+
+  /** True when a robot is too flat to work. It can still crawl home. */
+  isFlat(index: number): boolean {
+    return this.battery[index] <= BATTERY_DEAD;
   }
 
   pathOf(index: number): ActivePath | undefined {
@@ -370,7 +427,7 @@ export class BotPool {
    * Returns false if nothing walkable was reachable.
    */
   orderMove(index: number, tx: number, ty: number, nav: NavGrid, append = false): boolean {
-    const target = nav.nearestFree(tx, ty);
+    const target = this.parkable(nav.nearestFree(tx, ty), nav);
     if (!target) return false;
 
     if (append && (this.state[index] === BotState.Moving || this.isBusy(index))) {
@@ -385,6 +442,39 @@ export class BotPool {
       this.targetProp[index] = -1;
     }
     return this.driveTo(index, target.x, target.y, nav);
+  }
+
+  /**
+   * Moves a destination out of the band around cargo where a robot can stand by
+   * the nav grid's reckoning but gets pushed out by its own hull.
+   *
+   * Only destinations matter: passing through the band is fine, because a shove
+   * across the line of travel is what the separation pass is for. Stopping in
+   * it is what deadlocks.
+   */
+  private parkable(
+    target: { x: number; y: number } | null, nav: NavGrid,
+  ): { x: number; y: number } | null {
+    if (!target) return null;
+    let { x, y } = target;
+    for (const prop of this.props) {
+      const need = prop.radius + BOT_HALF_LENGTH + 12;
+      let dx = x - prop.x;
+      let dy = y - prop.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist >= need) continue;
+      if (dist < 1) {
+        dx = 1;
+        dy = 0;
+      } else {
+        dx /= dist;
+        dy /= dist;
+      }
+      x = prop.x + dx * need;
+      y = prop.y + dy * need;
+    }
+    if (x === target.x && y === target.y) return target;
+    return nav.nearestFree(x, y) ?? target;
   }
 
   /** Plans and starts a path. Does not touch the queue. */
@@ -462,6 +552,8 @@ export class BotPool {
   /** Begins a fetch immediately. Does not touch the queue. */
   private startFetch(index: number, propIndex: number, prop: Prop, nav: NavGrid): boolean {
     if (!canLift(this.hauler[index] as HaulerClassValue, prop.material, prop.shape)) return false;
+    // Flat machines can crawl about but have nothing left to work the arms.
+    if (this.isFlat(index)) return false;
     if (this.carryMaterial[index] >= 0) return false;
     // Approach from whichever side the robot is already on — but SNAPPED to
     // the nearest of the crate's four faces. Coming in on an arbitrary bearing
@@ -609,11 +701,62 @@ export class BotPool {
     return (Math.floor(x / this.hashCell) << 16) ^ (Math.floor(y / this.hashCell) & 0xffff);
   }
 
-  update(dt: number, nav: NavGrid, onPropTaken?: (propIndex: number) => void): void {
+  update(
+    dt: number, nav: NavGrid, drainEnabled: boolean,
+    onPropTaken?: (propIndex: number) => void,
+  ): void {
     for (let i = 0; i < this.count; i++) this.steer(i, dt, nav);
     for (let i = 0; i < this.count; i++) this.advanceTask(i, dt, nav, onPropTaken);
     this.resolveCollisions(nav);
     this.resolvePropOverlap(nav);
+    this.updatePower(dt, drainEnabled);
+  }
+
+  /**
+   * Drains and refills batteries.
+   *
+   * Charging is positional: park on a commissioned point and it fills. There is
+   * no docking sequence and nothing to click, because a machine that plugs
+   * itself in when it is stood in the right place needs no explaining.
+   */
+  private updatePower(dt: number, drainEnabled: boolean): void {
+    for (let i = 0; i < this.count; i++) {
+      let point: ChargePad | undefined;
+      for (const pad of this.chargers) {
+        if (!pad.unlocked) continue;
+        if (Math.abs(this.x[i] - pad.x) > CHARGE_PAD_W * 0.5) continue;
+        if (Math.abs(this.y[i] - pad.y) > CHARGE_PAD_H * 0.5) continue;
+        point = pad;
+        break;
+      }
+      if (point && !this.charging[i]) this.onSound?.('charge');
+      this.charging[i] = point ? 1 : 0;
+
+      if (point) {
+        this.battery[i] = Math.min(1, this.battery[i] + CHARGE_RATE * dt);
+        // Settle square onto the pad, nose to the cabinet. There is no docking
+        // sequence to run — a machine that has stopped in the right place tidies
+        // itself into the bay, which is all the sequence would have looked like.
+        const working =
+          this.task[i] === BotTask.Fetch || this.task[i] === BotTask.Deliver;
+        if (this.state[i] !== BotState.Moving && !working) {
+          const ease = Math.min(1, dt * 2.6);
+          this.x[i] += (point.x - this.x[i]) * ease;
+          this.y[i] += (point.y - this.y[i]) * ease;
+          this.angle[i] += angleDelta(this.angle[i], DOCK_FACING) * ease;
+        }
+        continue;
+      }
+      if (!drainEnabled) {
+        this.battery[i] = 1;
+        continue;
+      }
+      const moving = this.velocity[i] > 8;
+      const drain = moving
+        ? DRAIN_DRIVING * (this.velocity[i] / this.speed[i])
+        : DRAIN_IDLE;
+      this.battery[i] = Math.max(0, this.battery[i] - drain * dt);
+    }
   }
 
   /**
@@ -718,6 +861,7 @@ export class BotPool {
           this.liftFromX[i] = p.x;
           this.liftFromY[i] = p.y;
           this.liftT[i] = 0;
+          this.battery[i] = Math.max(0, this.battery[i] - DRAIN_PER_LIFT);
           const removed = this.targetProp[i];
           this.targetProp[i] = -1;
           onPropTaken?.(removed);
@@ -728,6 +872,7 @@ export class BotPool {
           this.liftFromY[i] = anchorY;
           this.liftT[i] = 1;
         }
+        this.onSound?.(isFetch ? 'grab' : 'place');
         this.taskPhase[i] = Phase.Lifting;
         this.phaseTime[i] = 0;
       }
@@ -766,10 +911,17 @@ export class BotPool {
     const hy = BOT_WIDTH / 2;
 
     for (let i = 0; i < this.count; i++) {
-      // A robot mid-grab is deliberately tucked up against its target.
+      // The crate a robot is working on never pushes it around — not just once
+      // the arms are out, but for the whole task.
+      //
+      // The nav grid clears cargo using the robot's circular radius (84) while
+      // this resolver pushes using the full hull (half-length 120). Anything
+      // parked in that 36 cm band is somewhere nav calls walkable and this call
+      // shoves it out of, and the robot oscillates there forever. An approach
+      // standoff lands squarely in that band, which is exactly how a fetch
+      // could hang on one particular crate and not its neighbours.
       const grabbing =
-        (this.task[i] === BotTask.Fetch || this.task[i] === BotTask.Deliver) &&
-        this.taskPhase[i] !== Phase.Driving;
+        this.task[i] === BotTask.Fetch || this.task[i] === BotTask.Deliver;
       const cx = Math.floor(this.x[i] / this.hashCell);
       const cy = Math.floor(this.y[i] / this.hashCell);
       const cos = Math.cos(-this.angle[i]);
@@ -868,10 +1020,36 @@ export class BotPool {
       // for that; taking the next order here abandoned the crate on arrival.
       this.state[i] = BotState.Idle;
       if (this.task[i] === BotTask.Fetch || this.task[i] === BotTask.Deliver) return;
-      // Otherwise roll straight on to whatever was stacked behind this.
-      this.advanceQueue(i, nav);
+      // Otherwise roll straight on to whatever was stacked behind this. A move
+      // that finishes with nothing behind it is over — leaving the task set to
+      // Move made a parked robot look permanently mid-order.
+      if (!this.advanceQueue(i, nav)) this.task[i] = BotTask.None;
       return;
     }
+
+    // Nothing should sit grinding against an obstacle indefinitely. If the gap
+    // to the waypoint stops shrinking, give the order up rather than burn a
+    // robot on it forever.
+    if (dist < this.lastGap[i] - 0.5) {
+      this.stallTime[i] = 0;
+    } else {
+      this.stallTime[i] += dt;
+      if (this.stallTime[i] > STALL_LIMIT) {
+        this.stallTime[i] = 0;
+        this.paths.delete(i);
+        this.velocity[i] = 0;
+        this.state[i] = BotState.Idle;
+        if (this.task[i] === BotTask.Fetch || this.task[i] === BotTask.Deliver) {
+          // Close enough to work with: let the align phase finish the job.
+          this.taskPhase[i] = Phase.Aligning;
+          this.phaseTime[i] = 0;
+        } else if (!this.advanceQueue(i, nav)) {
+          this.clearOrders(i);
+        }
+        return;
+      }
+    }
+    this.lastGap[i] = dist;
 
     const desired = Math.atan2(dy, dx);
     const delta = angleDelta(this.angle[i], desired);
@@ -884,7 +1062,8 @@ export class BotPool {
     const brake = isLast && !rolling
       ? Math.sqrt(2 * DECEL * Math.max(0, dist - 6))
       : Infinity;
-    const target = Math.min(this.speed[i] * alignment, brake);
+    const rated = this.isFlat(i) ? this.speed[i] * DEAD_SPEED : this.speed[i];
+    const target = Math.min(rated * alignment, brake);
     this.velocity[i] += (target - this.velocity[i]) * Math.min(1, dt * ACCEL_RESPONSE);
 
     const step = this.velocity[i] * dt;
