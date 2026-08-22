@@ -38,8 +38,14 @@ export const WALL_THICKNESS = 260;
 /** Interior floor slab: 120 m x 84 m. */
 export const FLOOR = { x: 0, y: 0, w: 12000, h: 8400 } as const;
 
-/** How far a trailer's interior reaches back from the wall. */
-export const TRAILER_DEPTH = 1000;
+/**
+ * How far a trailer's interior reaches back from the wall.
+ *
+ * Sized to the load rather than picked: eight rows of 120 cm plus the margin at
+ * the head end, so the last row lands just inside the doors with nothing
+ * hanging out.
+ */
+export const TRAILER_DEPTH = 1040;
 
 /**
  * Dark margin outside the shell, on every side. The camera may reach into it,
@@ -240,10 +246,9 @@ function layWire(
 export const PLATE_TRIGGER = 130;
 
 export function buildDockPlates(bays: DockBay[]): DockPlate[] {
-  // Every station gets one, in service or not. A shuttered bay with its own
-  // dead plate and cable reads as a station waiting to be opened; a bare wall
-  // reads as nothing at all.
-  return bays.map((b) => {
+  // Only bays in service. A dead plate wired to a shuttered door is furniture
+  // that looks like a control, and the shutter already says the bay is closed.
+  return bays.filter((b) => b.active).map((b) => {
     // Just clear of the opening on the right-hand side, far enough off the
     // wall that a robot standing on it is not in the trailer's way.
     const x = b.x + BAY_WIDTH / 2 + 210;

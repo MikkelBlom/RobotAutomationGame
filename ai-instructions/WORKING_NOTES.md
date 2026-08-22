@@ -526,3 +526,45 @@ speed, driving with a crate aboard costs 1.65x driving empty, lifting costs more
 than setting down. Measured: a full trailer of twelve crates uses 29.4% of a
 charge, so the first load leaves 70% in the tank and a charge is worth about
 three and a half trailers.
+
+## Cost layers, and things that must not reset (2026-08-22, later)
+
+**Passable-but-penalised needs a cost layer, not a block.** Dispatch plates
+could not be blocked (a robot sent to one has to reach it) and could not be
+ignored (crossing one in transit sends a trailer away by accident). `NavGrid`
+now carries an `avoid` layer beside `blocked`: A* multiplies the step cost by
+`AVOID_COST`, and the trip waives the penalty entirely when the GOAL is on
+penalised ground. Three places all had to agree or the dodge leaked:
+- the A* step cost,
+- the straight-shot shortcut in `findPath`,
+- `smooth()` — string-pulling would otherwise straighten a carefully routed
+  path right back through the ground the search paid to avoid.
+
+**And `nearestFree` has to know about it too.** With it unaware, a destination
+NEXT to a plate got snapped ONTO the plate, which then made the pathfinder think
+the plate was the goal and waive the penalty for the whole journey. It now
+prefers unpenalised ground unless the requested point is itself penalised —
+which is exactly the rule that keeps clicking the plate working.
+
+**Scaling a sprite scales its end caps.** The battery gauge shrank horizontally,
+so a half-empty bar still finished in a half circle and read as a shrunken bar
+rather than a drained one. Fixed by drawing a horizontal SLICE of the texture
+(interpolating `u1`) at the matching width, so the geometry is cut, not squashed.
+
+**A trail keyed off `state === Moving` disappears exactly when it matters.** A
+robot mid-grab has no path — it has arrived — so the whole route including the
+queued legs blanked for the several seconds the animation takes, which is
+precisely when you are looking to see what it does next. The loop now runs for
+anything with a path OR a queue.
+
+**Pace is a property of the factory, not the calendar.** `avgSeconds` reset at
+midnight, so the board read a wild number for the first crate of each day and
+settled down by evening, throwing away every measurement as it became
+meaningful. It is a lifetime mean now. `shippedToday` still rolls over, because
+that one genuinely is a daily figure.
+
+**A closed bay is not an empty bay.** The three shuttered docks were black
+openings, which read as bays whose truck was late. They have roller shutters
+baked into the floor now — slats, guide rails, a padlock — and no dispatch
+plate, because a dead plate wired to a shut door is furniture that looks like a
+control.

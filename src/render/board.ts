@@ -16,8 +16,14 @@ import type { SpriteBatch } from './spriteBatch';
  * texture, so the board costs one texture and no re-uploads.
  */
 
-/** Where the board hangs. Sits in the wall band, overhanging slightly. */
-export const BOARD_RECT = { x: 2600, y: -110, w: 3200, h: 300 } as const;
+/**
+ * Where the board hangs.
+ *
+ * Above the wall rather than across it: sitting in the wall band it read as
+ * painted onto the cladding, and it hid the run of wall behind it. Overlapping
+ * the outer face by a little is what keeps it attached to the building.
+ */
+export const BOARD_RECT = { x: 2600, y: -390, w: 3200, h: 300 } as const;
 
 /** Atlas pixels to world centimetres. Uniform — the art is cut to this ratio. */
 const ART_SCALE = BOARD_RECT.w / BOARD_ART_WIDTH;
@@ -57,11 +63,11 @@ export class QuotaBoard {
   /** Housing, into the albedo pass so it darkens with the rest of the hall. */
   collect(batch: SpriteBatch, bounds: Bounds): void {
     if (!boardVisible(bounds)) return;
-    // It hangs off the wall, so it throws a band onto the floor beneath. Without
-    // it the board reads as painted on rather than bolted up.
+    // Stands proud of the wall, so it throws a band down onto it. Without one
+    // the board reads as painted on rather than bolted up.
     batch.pushRegion(
-      REGIONS.blockShadow, BOARD_RECT.x, BOARD_RECT.y + BOARD_RECT.h * 0.62, 0,
-      BOARD_RECT.w * 1.02, BOARD_RECT.h * 1.15, 0, 0, 0, 0.42,
+      REGIONS.blockShadow, BOARD_RECT.x, BOARD_RECT.y + BOARD_RECT.h * 0.55, 0,
+      BOARD_RECT.w * 1.02, BOARD_RECT.h * 1.1, 0, 0, 0, 0.5,
     );
     batch.pushRegion(
       REGIONS.quotaBoard, BOARD_RECT.x, BOARD_RECT.y, 0,

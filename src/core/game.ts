@@ -132,6 +132,11 @@ export class Game {
     this.bots.onResolveDrop = this.resolveDrop;
     this.bots.setProps(this.level.props);
     this.bots.setChargers(this.level.chargers);
+    // Dispatch plates are passable but penalised: crossing one on the way past
+    // sends a trailer away by accident.
+    this.nav.setAvoidZones(
+      this.level.plates.map((p) => ({ x: p.x, y: p.y, w: p.size, h: p.size })),
+    );
     this.entities = new EntityRenderer(this.bots);
 
     // Start with a single machine, as asked. Snap it to walkable ground: a

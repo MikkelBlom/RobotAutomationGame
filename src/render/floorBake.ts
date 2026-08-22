@@ -207,6 +207,14 @@ function paintLoadingBays(ctx: CanvasRenderingContext2D, rng: Rng, bays: DockBay
     ctx.fillRect(x1 - 26, northY, 26, t);
     ctx.fillRect(x0, northY, bay.width, 22);
 
+    // A bay not in service is shut, not merely empty. An open black hole with
+    // no trailer ever arriving reads as a bay whose truck is late; a closed
+    // shutter reads as a bay that is not yours yet.
+    if (!bay.active) {
+      paintShutter(ctx, rng, x0, northY, bay.width, t);
+      continue;
+    }
+
     // Dock bumpers either side of the opening, at the face.
     ctx.fillStyle = '#15181b';
     ctx.fillRect(x0 - 46, FLOOR.y - 34, 46, 82);
@@ -979,6 +987,72 @@ function paintTonalField(
   ctx.imageSmoothingQuality = 'high';
   ctx.globalAlpha = strength;
   ctx.drawImage(src, x, y, w, h);
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+/**
+ * A roller shutter across a bay that is not in service.
+ *
+ * Slats across the opening with the guide rails either side, dropped to the
+ * floor and padlocked. Painted into the bake because it never moves — a bay
+ * being commissioned is a level change, not something that happens mid-frame.
+ */
+function paintShutter(
+  ctx: CanvasRenderingContext2D,
+  rng: Rng,
+  x0: number,
+  y0: number,
+  width: number,
+  depth: number,
+): void {
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x0, y0, width, depth);
+  ctx.clip();
+
+  ctx.fillStyle = '#3c4147';
+  ctx.fillRect(x0, y0, width, depth);
+
+  // Slats run across the opening, seen end-on from above.
+  const pitch = 30;
+  for (let y = y0; y < y0 + depth; y += pitch) {
+    ctx.fillStyle = 'rgba(255,255,255,0.055)';
+    ctx.fillRect(x0, y, width, pitch * 0.42);
+    ctx.fillStyle = 'rgba(0,0,0,0.34)';
+    ctx.fillRect(x0, y + pitch * 0.72, width, pitch * 0.28);
+  }
+
+  // Guide rails.
+  ctx.fillStyle = '#23272c';
+  ctx.fillRect(x0, y0, 24, depth);
+  ctx.fillRect(x0 + width - 24, y0, 24, depth);
+  ctx.fillStyle = 'rgba(255,255,255,0.08)';
+  ctx.fillRect(x0 + 6, y0, 5, depth);
+  ctx.fillRect(x0 + width - 18, y0, 5, depth);
+
+  // Bottom rail, resting on the slab, with a hasp and padlock at the centre.
+  ctx.fillStyle = '#1b1f23';
+  ctx.fillRect(x0, y0 + depth - 30, width, 30);
+  ctx.fillStyle = 'rgba(255,255,255,0.10)';
+  ctx.fillRect(x0, y0 + depth - 30, width, 5);
+  ctx.fillStyle = '#2e3339';
+  ctx.fillRect(x0 + width / 2 - 26, y0 + depth - 42, 52, 30);
+  ctx.strokeStyle = '#9aa3ad';
+  ctx.lineWidth = 6;
+  ctx.beginPath();
+  ctx.arc(x0 + width / 2, y0 + depth - 34, 9, Math.PI, TAU);
+  ctx.stroke();
+  ctx.fillStyle = '#6e7681';
+  ctx.fillRect(x0 + width / 2 - 11, y0 + depth - 34, 22, 17);
+
+  // Grime and rust streaks — nothing has opened this in a while.
+  for (let i = 0; i < 22; i++) {
+    ctx.globalAlpha = rng.range(0.05, 0.20);
+    ctx.fillStyle = rng.chance(0.55) ? '#14171a' : '#6b4622';
+    const w = rng.range(6, 26);
+    ctx.fillRect(rng.range(x0, x0 + width), y0, w, rng.range(depth * 0.3, depth));
+  }
   ctx.globalAlpha = 1;
   ctx.restore();
 }

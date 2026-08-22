@@ -19,9 +19,10 @@ export function crateValue(material: CrateMaterialValue, shape: CrateShapeValue)
 /**
  * How many crates a shift is expected to move.
  *
- * One trailer's worth. It has to be a figure the hall can actually supply —
- * with a quota above the number of liftable crates in the building, the board
- * is just permanently red.
+ * No longer a trailer's worth — a trailer takes twenty-four and the hall holds
+ * barely thirty the starting machine can lift, so a quota tied to the trailer
+ * would leave the board permanently red. It has to be a figure the building can
+ * actually supply.
  */
 const DAILY_QUOTA = 12;
 
@@ -31,18 +32,25 @@ export class Ledger {
   /** Money banked across the whole run, not just today. */
   revenue = 0;
   /**
-   * Mean seconds per crate handled today.
+   * Mean seconds per crate handled, across the whole run.
+   *
+   * Not a daily figure. How fast the machines work is a property of the
+   * factory, not of the calendar, and resetting it at midnight threw away every
+   * measurement just as it was becoming meaningful — the board would read a
+   * wild number for the first crate of each day and settle down again by
+   * evening.
    *
    * Measured on crates going ONTO a trailer, not off in one. Shipping happens
-   * in batches of up to twelve, so tying the pace to it would leave the figure
-   * frozen for a whole load and then lurch — and it would degrade while a
-   * trailer is away, which says nothing about how the machines are working.
+   * a whole load at a time, so tying the pace to it would leave the figure
+   * frozen and then lurch, and it would degrade while a trailer is away, which
+   * says nothing about how the machines are working.
    */
   avgSeconds = 0;
 
-  /** Crates put aboard today, shipped or not. Drives the average only. */
-  private loadedToday = 0;
-  private shiftStart = 0;
+  /** Crates put aboard since the run began. Drives the average only. */
+  private loaded = 0;
+  /** Simulated seconds of the run so far, at the last crate. */
+  private runStart = 0;
   private day = 0;
 
   /**
@@ -65,13 +73,13 @@ export class Ledger {
   /**
    * Records one crate set down in a trailer, at `now` simulated seconds.
    *
-   * Mean over the whole shift so far, not since the last crate: one fast
-   * turnaround should not make a slow shift look quick.
+   * Mean over the whole run so far, not since the last crate: one fast
+   * turnaround should not make a slow factory look quick.
    */
   load(now: number): void {
-    this.loadedToday++;
-    const elapsed = Math.max(0, now - this.shiftStart);
-    this.avgSeconds = elapsed / this.loadedToday;
+    this.loaded++;
+    const elapsed = Math.max(0, now - this.runStart);
+    this.avgSeconds = elapsed / this.loaded;
   }
 
   /**
@@ -85,8 +93,7 @@ export class Ledger {
     if (day === this.day) return;
     this.day = day;
     this.shippedToday = 0;
-    this.loadedToday = 0;
-    this.avgSeconds = 0;
-    this.shiftStart = now;
+    // The pace figure deliberately survives the rollover.
+    void now;
   }
 }

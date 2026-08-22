@@ -23,11 +23,20 @@ export type TrailerStateValue = (typeof TrailerState)[keyof typeof TrailerState]
 
 /** Slots a trailer holds, as columns across by rows deep. */
 export const SLOT_COLS = 3;
-export const SLOT_ROWS = 4;
+/**
+ * Rows deep. Loaded far end first, so the last row sits right at the doors and
+ * the robot never has to get past its own work to reach the next slot.
+ */
+export const SLOT_ROWS = 8;
 export const SLOT_COUNT = SLOT_COLS * SLOT_ROWS;
 
-/** Clear length left at the rear for a robot to work in. */
-const WORKING_LENGTH = 520;
+/**
+ * Clear length left at the rear for a robot to work in.
+ *
+ * Short now that the rows run to the doors: the machine loading the last row
+ * stands in the bay mouth rather than inside the trailer.
+ */
+const WORKING_LENGTH = 200;
 
 const ARRIVE_TIME = 3.4;
 const OPEN_TIME = 1.6;
@@ -260,7 +269,7 @@ export class TrailerFleet {
     const row = Math.floor(slot / SLOT_COLS);
     const rear = TrailerFleet.rearY(t);
     // Row 0 is the far end of the trailer.
-    const far = rear - TRAILER_DEPTH + CRATE_UNIT * 0.5 + 60;
+    const far = rear - TRAILER_DEPTH + CRATE_UNIT * 0.5 + 40;
     return {
       x: t.bay.x + (col - (SLOT_COLS - 1) / 2) * CRATE_UNIT,
       y: far + row * CRATE_UNIT,

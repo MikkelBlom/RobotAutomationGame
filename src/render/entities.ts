@@ -1,6 +1,6 @@
 import type { LightingState } from '../core/dayCycle';
 import type { Settings } from '../core/settings';
-import { BOT_LENGTH, BOT_RADIUS, BOT_WIDTH, BotState, BotTask, type BotPool } from '../sim/bots';
+import { BOT_LENGTH, BOT_RADIUS, BOT_WIDTH, type BotPool } from '../sim/bots';
 import { BOT_ART, REGIONS } from './atlas';
 import { crateQuad, crateRegion, outlineQuad, outlineRect } from './crateArt';
 import type { CrateMaterialValue, CrateShapeValue } from '../sim/cargo';
@@ -119,6 +119,8 @@ function mixTint(
 ): { r: number; g: number; b: number } {
   return { r: a.r + (c.r - a.r) * t, g: a.g + (c.g - a.g) * t, b: a.b + (c.b - a.b) * t };
 }
+
+const EMPTY_PATH = new Float32Array(0);
 
 const MAX_TRAIL_DOTS = 4000;
 
@@ -310,12 +312,22 @@ export class EntityRenderer {
           ? 0.62 + 0.38 * Math.max(0, Math.sin(time * 5.5 + b.phase[i]))
           : 1;
 
-      const filled = Math.max(0.07, level) * STRIP_LENGTH;
-      // Grows from the left-hand end rather than the middle, so a draining bar
-      // reads as draining and not as shrinking.
+      // Filled by taking a SLICE of the strip texture rather than scaling the
+      // whole sprite down. Scaling squashed the rounded end cap along with the
+      // bar, so a half-empty gauge still finished in a half circle and read as
+      // a shrunken bar rather than a drained one.
+      const fraction = Math.max(0.05, level);
+      const filled = fraction * STRIP_LENGTH;
+      const full = REGIONS.chargeStrip;
+      const slice = {
+        u0: full.u0,
+        v0: full.v0,
+        u1: full.u0 + (full.u1 - full.u0) * fraction,
+        v1: full.v1,
+      };
       const shift = (filled - STRIP_LENGTH) * 0.5;
       batch.pushRegion(
-        REGIONS.chargeStrip,
+        slice,
         cx + Math.cos(across) * shift, cy + Math.sin(across) * shift, across,
         filled, STRIP_WIDTH, tint.r, tint.g, tint.b, pulse * GAUGE_GAIN,
       );
@@ -361,21 +373,23 @@ export class EntityRenderer {
     let dots = 0;
 
     for (let i = 0; i < b.count && dots < MAX_TRAIL_DOTS; i++) {
-      if (b.state[i] !== BotState.Moving) continue;
-      if (b.task[i] === BotTask.Fetch && !b.pathOf(i)) continue;
       const path = b.pathOf(i);
-      if (!path) continue;
+      const queue = b.queueOf(i);
+      // A robot with its arms out has no path — it has arrived. Requiring one
+      // blanked the whole route for the several seconds a grab takes, which is
+      // exactly when you are looking to see what it does next.
+      if (!path && !(queue && queue.length > 0)) continue;
       const selected = b.selected[i] === 1;
       // Unselected robots still show a faint trail so the hall reads as busy.
       const baseAlpha = selected ? 0.85 : 0.28;
 
-      const pts = path.points;
+      const pts = path ? path.points : EMPTY_PATH;
       let prevX = b.x[i];
       let prevY = b.y[i];
       let travelled = 0;
       let carry = 0;
 
-      for (let p = path.cursor; p < pts.length; p += 2) {
+      for (let p = path ? path.cursor : 0; p < pts.length; p += 2) {
         const nx = pts[p];
         const ny = pts[p + 1];
         const segLen = Math.hypot(nx - prevX, ny - prevY);
@@ -426,7 +440,6 @@ export class EntityRenderer {
       // The one liberty taken is a dog-leg at the slab edge for anything inside
       // a trailer: a straight line to a loading slot cuts across the wall and
       // out through the dark, which reads as a bug rather than a shortcut.
-      const queue = b.queueOf(i);
       if (queue && queue.length > 0) {
         let fromX = b.goalX[i];
         let fromY = b.goalY[i];

@@ -36,11 +36,29 @@ const NAV = {
   h: FLOOR.h + WALL_THICKNESS + TRAILER_DEPTH,
 } as const;
 
+/**
+ * What a penalised cell costs, as a multiple of a plain one.
+ *
+ * High enough that a detour of any sensible length is preferred, low enough
+ * that a robot boxed in on penalised ground can still get out.
+ */
+const AVOID_COST = 14;
+
 export class NavGrid {
   readonly cell = CELL;
   readonly cols: number;
   readonly rows: number;
   readonly blocked: Uint8Array;
+  /**
+   * Ground that is passable but should be left alone.
+   *
+   * Dispatch plates are the case this exists for: driving over one on the way
+   * somewhere else sends a trailer away by accident, but a robot sent TO one
+   * obviously has to be able to reach it. Blocking would break the second;
+   * ignoring it breaks the first. A cost layer is the only thing that does
+   * both, and it is the right shape for lanes and keep-clear zones later.
+   */
+  private readonly avoid: Uint8Array;
 
   // Reusable A* scratch, sized once. Avoids per-request allocation.
   private readonly gScore: Float32Array;
@@ -63,6 +81,7 @@ export class NavGrid {
     this.rows = Math.ceil(NAV.h / CELL);
     const n = this.cols * this.rows;
     this.blocked = new Uint8Array(n);
+    this.avoid = new Uint8Array(n);
     this.gScore = new Float32Array(n);
     this.fScore = new Float32Array(n);
     this.cameFrom = new Int32Array(n);
@@ -73,6 +92,24 @@ export class NavGrid {
     this.botRadius = botRadius;
     this.bays = bays;
     this.rasterise(columns, props, botRadius);
+  }
+
+  /**
+   * Marks the ground robots should route around unless it is where they are
+   * going. Static, so this is called once at load.
+   */
+  setAvoidZones(zones: ReadonlyArray<{ x: number; y: number; w: number; h: number }>): void {
+    this.avoid.fill(0);
+    for (const zone of zones) {
+      const pad = this.botRadius * 0.5;
+      const x0 = Math.max(0, Math.floor((zone.x - zone.w / 2 - pad - NAV.x0) / CELL));
+      const x1 = Math.min(this.cols - 1, Math.ceil((zone.x + zone.w / 2 + pad - NAV.x0) / CELL));
+      const y0 = Math.max(0, Math.floor((zone.y - zone.h / 2 - pad - NAV.y0) / CELL));
+      const y1 = Math.min(this.rows - 1, Math.ceil((zone.y + zone.h / 2 + pad - NAV.y0) / CELL));
+      for (let cy = y0; cy <= y1; cy++) {
+        for (let cx = x0; cx <= x1; cx++) this.avoid[cy * this.cols + cx] = 1;
+      }
+    }
   }
 
   /**
@@ -237,14 +274,38 @@ export class NavGrid {
   /** Nearest walkable point to an arbitrary click, searched in rings. */
   nearestFree(x: number, y: number): { x: number; y: number } | null {
     const { cx, cy } = this.cellOf(x, y);
-    if (!this.isBlockedCell(cx, cy)) return { x, y };
+    /**
+     * Whether the caller asked for penalised ground.
+     *
+     * Clicking a dispatch plate has to put a robot ON it, so a request that
+     * lands inside one is taken at its word. A request that lands NEXT to one
+     * must not be snapped onto it, though — that quietly turned an ordinary
+     * move into a deliberate trip to the plate, and the pathfinder then waived
+     * the penalty for the whole journey.
+     */
+    const wanted = this.inBounds(cx, cy) && this.avoid[cy * this.cols + cx] === 1;
+    const usable = (nx: number, ny: number): boolean => {
+      if (this.isBlockedCell(nx, ny)) return false;
+      if (wanted || !this.inBounds(nx, ny)) return true;
+      return this.avoid[ny * this.cols + nx] === 0;
+    };
+
+    if (usable(cx, cy)) return { x, y };
     for (let r = 1; r < 90; r++) {
       for (let dy = -r; dy <= r; dy++) {
         for (let dx = -r; dx <= r; dx++) {
           if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
-          const nx = cx + dx;
-          const ny = cy + dy;
-          if (!this.isBlockedCell(nx, ny)) return this.centreOf(nx, ny);
+          if (usable(cx + dx, cy + dy)) return this.centreOf(cx + dx, cy + dy);
+        }
+      }
+    }
+    // Nothing clear of a penalised patch within reach: better to stand on one
+    // than to refuse the order outright.
+    for (let r = 1; r < 90; r++) {
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+          if (!this.isBlockedCell(cx + dx, cy + dy)) return this.centreOf(cx + dx, cy + dy);
         }
       }
     }
@@ -252,7 +313,7 @@ export class NavGrid {
   }
 
   /** Sampled line-of-sight between two world points, used to straighten paths. */
-  hasLineOfSight(x0: number, y0: number, x1: number, y1: number): boolean {
+  hasLineOfSight(x0: number, y0: number, x1: number, y1: number, crossAvoid = true): boolean {
     const dx = x1 - x0;
     const dy = y1 - y0;
     const dist = Math.hypot(dx, dy);
@@ -260,9 +321,21 @@ export class NavGrid {
     if (steps === 0) return true;
     for (let i = 1; i < steps; i++) {
       const t = i / steps;
-      if (this.isBlockedWorld(x0 + dx * t, y0 + dy * t)) return false;
+      const px = x0 + dx * t;
+      const py = y0 + dy * t;
+      if (this.isBlockedWorld(px, py)) return false;
+      // String-pulling would otherwise straighten a carefully routed path back
+      // through the very ground the search paid to avoid.
+      if (!crossAvoid && this.avoidsWorld(px, py)) return false;
     }
     return true;
+  }
+
+  /** True where the ground is passable but penalised. */
+  private avoidsWorld(x: number, y: number): boolean {
+    const { cx, cy } = this.cellOf(x, y);
+    if (!this.inBounds(cx, cy)) return false;
+    return this.avoid[cy * this.cols + cx] === 1;
   }
 
   // ---------------------------------------------------------------- A* ----
@@ -317,8 +390,12 @@ export class NavGrid {
 
     if (startIndex === goalIndex) return new Float32Array([sx, sy, tx, ty]);
 
+    // Going somewhere penalised is a deliberate choice, so the penalty is
+    // waived for that trip. Otherwise the search steers clear of it.
+    const heading = this.avoid[goalIndex] === 1;
+
     // Straight shot? Skip the search entirely — most orders are like this.
-    if (this.hasLineOfSight(sx, sy, tx, ty)) return new Float32Array([sx, sy, tx, ty]);
+    if (this.hasLineOfSight(sx, sy, tx, ty, heading)) return new Float32Array([sx, sy, tx, ty]);
 
     const id = ++this.searchId;
     this.heapSize = 0;
@@ -366,7 +443,8 @@ export class NavGrid {
           }
           const neighbour = ny * this.cols + nx;
           const step = dx !== 0 && dy !== 0 ? Math.SQRT2 : 1;
-          const tentative = this.gScore[current] + step;
+          const penalty = !heading && this.avoid[neighbour] === 1 ? AVOID_COST : 1;
+          const tentative = this.gScore[current] + step * penalty;
 
           if (this.stamp[neighbour] !== id) {
             this.stamp[neighbour] = id;
@@ -410,11 +488,11 @@ export class NavGrid {
     ordered[ordered.length - 2] = tx;
     ordered[ordered.length - 1] = ty;
 
-    return new Float32Array(this.smooth(ordered));
+    return new Float32Array(this.smooth(ordered, heading));
   }
 
   /** String-pulling: drop any waypoint we can see past. */
-  private smooth(points: number[]): number[] {
+  private smooth(points: number[], crossAvoid: boolean): number[] {
     if (points.length <= 4) return points;
     const out: number[] = [points[0], points[1]];
     let anchorX = points[0];
@@ -424,7 +502,7 @@ export class NavGrid {
     while (i < points.length - 2) {
       const nextX = points[i + 2];
       const nextY = points[i + 3];
-      if (this.hasLineOfSight(anchorX, anchorY, nextX, nextY)) {
+      if (this.hasLineOfSight(anchorX, anchorY, nextX, nextY, crossAvoid)) {
         i += 2; // the point at i is redundant
         continue;
       }
