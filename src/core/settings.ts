@@ -60,7 +60,9 @@ export function defaultSettings(): Settings {
     simSpeed: 1,
     // One point commissioned from the start. With none there is no way back
     // from a flat battery, which is a dead end rather than a difficulty.
-    chargePoints: 1,
+    // Every point sealed. The first one is the first thing money buys, and
+    // needing it is what teaches the battery.
+    chargePoints: 0,
     batteryDrain: true,
 
     sound: true,
