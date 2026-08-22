@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-22T01:35:11.908Z",
+  "generatedAt": "2026-08-22T01:57:48.319Z",
   "project": {
     "id": 31,
     "name": "RobotAutomationGame",
@@ -12,25 +12,36 @@
   },
   "notes": [
     {
-      "id": 147,
-      "title": "Open decisions before building the intro",
-      "body": "1. Steel 1x2 and 2x2 can be lifted by NO hauler class, ever. liftRefusal gates\n   material and shape separately and no single class clears both. Either Heavy\n   lifts everything (which makes Long and Big pointless once owned), or\n   capability becomes two independent axes — deck size and weight rating — that\n   stack. The second matches how the upgrades above are written.\n\n2. Day-one quota. Twelve is four minutes of a seventeen-minute day.\n\n3. First-miss consequence: game over, or scripted and survivable?\n\n4. Price of a full charge. See feedback note — $200-360 puts power at 10-20% of\n   crate revenue.\n\n5. When the first boat arrives. Recommend day two or three, before the floor is\n   bare.\n\n6. Does the night 00:00-07:00 fast-forward, cut, or is it a scored end-of-day\n   screen?",
-      "pinned": true,
-      "updatedAt": "2026-08-22T01:35:10.848Z",
-      "tags": [
-        "decisions",
-        "design"
-      ]
-    },
-    {
       "id": 141,
       "title": "Intro phase — spec",
-      "body": "TIME\n  1 real second = 1 in-game minute. The working day runs 07:00 to midnight —\n  1,020 real seconds, seventeen minutes. Night is skipped or fast-forwarded to\n  07:00.\n  (Current code: dayLengthSeconds 240 for a full 24 h. Needs changing.)\n\nTHE LOOP\n  Right-click a crate, right-click the mark in the trailer, hit the plate to\n  send the truck. Trucks do NOT leave on their own — that is an upgrade.\n\nQUEUE\n  Starts at length 0. All you can do is issue one order at a time. Queue length\n  is a purchasable upgrade, bought one step at a time. One mechanic introduced\n  at a time.\n\nCHARGING\n  Every charge point sealed at the start. The first purchase is a charge point,\n  and needing it is what teaches the battery. Charging costs money by the amount\n  drawn — the price of electricity.\n\nTHE SHOP\n  A door beside or under the display boards. The player DRIVES a bot in. Inside\n  is a room where purchases are made by standing a bot on a pressure plate.\n  · Time does not progress in the shop.\n  · The factory does not progress either, so it is not an idle spot.\n  · No battery drain inside.\n  The cost of shopping is the drive there and back — that is real day-time and\n  real charge, which is the right price for a pause.\n\n  This also settles WHICH bot gets a per-bot upgrade: the one standing on the\n  plate. No selection UI needed.\n\nUNLOCK\n  The shop opens when the first daily quota is delivered.\n\nLOSING\n  · Miss the day's quota — that is the primary failure.\n  · Run flat with no charge point bought. You can still reach the shop in low\n    power mode, but you cannot lift crates in low power, so you cannot earn.\n  Later phases allow 2-3 missed quotas before failure. Missing should not always\n  be an enemy — this is an incremental game, and permanent tension gets tiring.\n\nQUOTA\n  Daily, increasing. Crates now; built items later, which is what forces the\n  factory phase.",
+      "body": "TIME\n  1 real second = 1 in-game minute. The working day runs 07:00 to midnight —\n  1,020 real seconds, seventeen minutes. Night is skipped or fast-forwarded.\n  (Current code: dayLengthSeconds 240 for a full 24 h. Needs changing.)\n\n  The long day is deliberate and stays long. It is thinking room: time to drive\n  about, look at things, and later to pull an assembly line apart and rebuild it\n  without a new quota landing every five minutes. It is not meant to be filled\n  with work.\n\nTHE LOOP\n  Right-click a crate, right-click the mark in the trailer, hit the plate to\n  send the truck. Trucks do not leave on their own — that is an upgrade.\n\nPACING — each unlock adds a source of action, and the player chooses the pace\n  · First truck sent          -> the shop opens\n  · First charge point bought -> the first boat is allowed to arrive\n  · Then queue length, then per-bot automation, then a second bot\n  Someone who wants to keep busy always has a new thing; someone who wants to\n  potter about can.\n\nWHAT THE INTRO DOES NOT DO\n  It does not end with a clear floor. The 1x2s, the 2x2s and the steel all\n  need upgrades that arrive later, so a good deal of cargo is still sitting\n  there when the factory phase starts. That is intentional: you plan the first\n  factory around the crates you cannot move yet, and clearing them later buys\n  you floor space and a better layout. Floor space becomes a resource.\n\nQUEUE\n  Starts at length 0 — one order at a time. Bought up a step at a time, and\n  deliberately NOT the first purchase: charging comes first, then queue, then\n  per-bot automation, so the player buys a bot, automates it and watches it work.\n\n  The queue must not become vestigial once bots are automatic. Its long-term\n  home is player-authored routes in the factory phase — drawn paths through an\n  assembly line, rather than bots only ever choosing for themselves.\n\nCHARGING\n  Every charge point sealed at the start. The first purchase is a charge point.\n  Charging costs money by the amount drawn, subject to the no-lock rules.",
       "pinned": true,
-      "updatedAt": "2026-08-22T01:35:10.845Z",
+      "updatedAt": "2026-08-22T01:57:47.251Z",
       "tags": [
         "design",
         "intro"
+      ]
+    },
+    {
+      "id": 148,
+      "title": "No game over — how the intro avoids a hard lock",
+      "body": "The intro has to teach that power runs out and costs money, without ever\nleaving a player unable to continue. The failure it must never allow: flat bot,\nempty floor, no money.\n\nProposed rules, all cheap to implement:\n\n· RESERVE FLOOR. A bot never drops fully to zero. It keeps a small reserve —\n  enough to crawl and to reach a pad. Low power still refuses to lift, so the\n  lesson lands, but the bot is never immobile.\n\n· THE BOAT WAITS. No boat arrives until the first charge point is bought. You\n  cannot be given more work than you have the power to do.\n\n· CHARGING CANNOT BANKRUPT YOU. Power is billed by the amount drawn, but if you\n  cannot pay, you get charged anyway and the meter simply does not run. The\n  cost is real when you have money and invisible when you do not. This keeps the\n  mechanic without ever being the thing that ends a run.\n\n· MISSING A QUOTA COSTS SOMETHING, NOT EVERYTHING. A fine, a docked payment, a\n  reputation hit. Never a run ending.\n\nTogether these mean there is no state the player can reach that has no way out,\nwhich is what an incremental should guarantee. The pressure comes from wanting\nto go faster, not from the threat of losing.",
+      "pinned": true,
+      "updatedAt": "2026-08-22T01:57:47.249Z",
+      "tags": [
+        "design",
+        "intro"
+      ]
+    },
+    {
+      "id": 147,
+      "title": "Open decisions before building the intro",
+      "body": "SETTLED\n\n1. Capability is TWO independent axes, both per-bot, both upgradeable:\n   · Size — how big a footprint the deck takes, and therefore how many crates:\n     1x1 -> 1x2 (or two 1x1) -> 2x2 (or two 1x2, or four 1x1).\n   · Weight — timber only -> steel as well.\n   They stack, so a 1x1 heavy hauler is a legitimate build. Steel is the most\n   expensive line and is meant to stay out of reach longest, but a player may\n   choose to buy into it early and stay small.\n\n2. No game over at all. See the separate no-lock note.\n\n3. The first boat arrives after the first truck or two, on day one.\n\n4. Quota is typed and dynamic from the start, even while it is always crates.\n\nSTILL OPEN\n\n5. Price of a full charge, and whether it is billed at all during the intro.\n6. Whether night 00:00-07:00 fast-forwards, cuts, or is a scored end-of-day.\n7. Day-one quota size.",
+      "pinned": true,
+      "updatedAt": "2026-08-22T01:57:47.248Z",
+      "tags": [
+        "decisions",
+        "design"
       ]
     },
     {
@@ -53,6 +64,17 @@
       "tags": [
         "design",
         "vision"
+      ]
+    },
+    {
+      "id": 149,
+      "title": "Upgrade catalogue 5 — additions",
+      "body": "Added after the first pass.\n\n75. Battery chemistry — a flat percentage more capacity, repeatable, cheap\n    early and steeply priced later.\n76. Charge threshold tuning — set the level at which auto-charge triggers, so a\n    fleet can be biased towards uptime or towards fewer trips.\n77. Idle shutdown — a parked bot draws almost nothing, removing the overnight\n    drain on a fleet that is not working.\n78. Battery health — capacity stops decaying with cycle count (only if decay is\n    ever introduced; do not add decay just to sell the cure).\n79. Swap packs — instead of charging in place, a bot exchanges its pack at a\n    point in seconds, and the pack recharges on the rack.\n80. Programmed routes — the player draws a path and a bot follows it as a\n    standing order. The long-term home of the queue system once bots pick their\n    own jobs, and the natural interface for an assembly line.\n81. Route sharing — assign one drawn route to several bots at once.\n82. New bot chassis types beyond the hauler. Flying and water bots are already\n    planned much later; the hauler should not be assumed to be the only ground\n    frame either — a small fast courier and a slow high-capacity mover are two\n    obvious ground variants that trade against each other.",
+      "pinned": false,
+      "updatedAt": "2026-08-22T01:57:47.252Z",
+      "tags": [
+        "design",
+        "upgrades"
       ]
     },
     {
@@ -139,19 +161,6 @@
       "tags": []
     },
     {
-      "id": 389,
-      "title": "Two-axis hauler capability: deck size and weight rating",
-      "body": "Steel 1x2 and steel 2x2 are liftable by nothing. liftRefusal in\nsrc/sim/cargo.ts demands Heavy for steel AND Long-or-Big for the shape, and no\nclass is both, so those crates are permanent scenery (3 per seed at present).\n\nReplace the single HaulerClass enum with two independent ratings per bot:\ndeck size (1x1 / 1x2 / 2x2) and weight (timber / steel). They stack. This is\nalso what the upgrade catalogue assumes.",
-      "status": "todo",
-      "priority": "high",
-      "dueDate": null,
-      "updatedAt": "2026-08-22T01:35:10.834Z",
-      "tags": [
-        "bug",
-        "design"
-      ]
-    },
-    {
       "id": 390,
       "title": "Restock the floor, or the game ends after one truck",
       "body": "29 liftable crates on the floor, 24 slots in a trailer, nothing\nrestocks. One full load and the game stalls with 5 crates left and a trailer\nthat can never fill.\n\nFixed by the boat (phase 2), which needs to arrive during the intro rather than\nafter it. Until then the floor could simply start fuller.",
@@ -221,6 +230,45 @@
       "updatedAt": "2026-08-22T01:35:10.842Z",
       "tags": [
         "offline"
+      ]
+    },
+    {
+      "id": 396,
+      "title": "Two-axis hauler capability: size and weight, both per-bot",
+      "body": "DECIDED: two independent, stacking axes, replacing the single\nHaulerClass enum.\n\n· Size: 1x1 -> 1x2 (or two 1x1) -> 2x2 (or two 1x2, or four 1x1)\n· Weight: timber -> steel\n\nFixes a live bug as a side effect: steel 1x2 and steel 2x2 are currently\nliftable by nothing, because liftRefusal in src/sim/cargo.ts demands Heavy for\nthe material AND Long-or-Big for the shape, and no single class is both.\n\nSteel is the most expensive line and should stay out of reach longest, but a\n1x1 heavy hauler must be a legal build — the axes are independent, not a ladder.\n\nDeck capacity by size also needs modelling: a bot is not carrying 'a crate' any\nmore, it is carrying a set of crates that fit its deck.",
+      "status": "todo",
+      "priority": "high",
+      "dueDate": null,
+      "updatedAt": "2026-08-22T01:57:47.243Z",
+      "tags": [
+        "bug",
+        "design"
+      ]
+    },
+    {
+      "id": 397,
+      "title": "No-lock guarantees: reserve floor, held boat, unbillable charge",
+      "body": "There is no game over. Implement the three guarantees from the no-lock\nnote:\n\n1. A bot never reaches zero charge — it keeps a reserve that still allows the\n   low-power crawl. Lifting is still refused in low power.\n2. No boat arrives until the first charge point is bought.\n3. Charging is billed only when the money exists; when it does not, the charge\n   still happens and the meter does not run.\n\nMissing a quota costs money or reputation, never the run.",
+      "status": "todo",
+      "priority": "high",
+      "dueDate": null,
+      "updatedAt": "2026-08-22T01:57:47.246Z",
+      "tags": [
+        "design",
+        "intro"
+      ]
+    },
+    {
+      "id": 398,
+      "title": "Auto-charge: bots take themselves to a free pad when low",
+      "body": "Per-bot upgrade. Below a threshold, and only if a commissioned point is\nfree, the bot breaks off, docks, charges and resumes. Needs a claim on the pad\nso two bots do not head for the same one.",
+      "status": "todo",
+      "priority": "medium",
+      "dueDate": null,
+      "updatedAt": "2026-08-22T01:57:47.247Z",
+      "tags": [
+        "design",
+        "upgrades"
       ]
     }
   ]
