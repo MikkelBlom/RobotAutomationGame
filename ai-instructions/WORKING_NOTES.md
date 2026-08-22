@@ -568,3 +568,45 @@ openings, which read as bays whose truck was late. They have roller shutters
 baked into the floor now — slats, guide rails, a padlock — and no dispatch
 plate, because a dead plate wired to a shut door is furniture that looks like a
 control.
+
+## The rate model (2026-08-22, agent)
+
+`src/sim/rateModel.ts` projects what the factory WOULD have produced over a
+stretch of time, in closed form, instead of replaying the simulation. It is not
+wired into `game.ts` yet — `MAX_CATCH_UP` is the boundary where it would take
+over from live replay.
+
+**Shape.** Lanes (one per crate kind, not per hauler class — the class lattice
+is not a total order, so a fixed class-to-crate assignment strands a Heavy
+beside a pallet it could lift). Cohorts (identical robots collapse to one row,
+which is why cost is flat in fleet size). Segmented integration to the next
+event, each segment O(1): 30 days costs 0.08 ms with one robot, 1.1 ms with
+5,000.
+
+**Losses are layered and each gap is charged to a named limit** —
+capability → alive → offeredIfStocked → fleetRate → rate — so `breakdown`
+answers "why was I slow", which is the number the game will eventually want to
+show.
+
+**Only one fitted coefficient** (`pathSlack = 1.12`). Everything else is derived
+from the simulation's own constants. The validation worth knowing: the two
+measurements it was checked against (22 s per crate, 0.0245 charge per crate)
+depend on distance through DIFFERENT constants, so solving one for route length
+and predicting the other is a real test — it lands 1.3% out with nothing tuned.
+
+**Two traps when integrating**, both from the model's own notes:
+- Pass the load point as the MIDDLE of the slot run, not the next free slot.
+  Slot 0 is ~6 m deeper into the bay and makes every projected cycle a fifth too
+  slow.
+- Never call `ledger.load()` on a projection. `avgSeconds` is a measurement of
+  machines working; inventing one for a stretch nobody watched is a lie on the
+  board.
+
+**Known gaps**: congestion is not modelled at all (fine until fleets are large
+enough to shove each other); `pickLane` is greedy rather than an optimal
+assignment (exact with one hauler class); the floor is a fixed stock with no
+inflow.
+
+**Fragility to fix at some point**: every timing constant the model needs is
+module-private in `bots.ts`/`trailers.ts` and is mirrored in `RATE_CONSTANTS`.
+Exporting them would remove the whole class of drift.
