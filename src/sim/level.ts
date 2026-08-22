@@ -359,11 +359,91 @@ export interface Prop {
    */
   w: number;
   h: number;
+  /**
+   * Set while this crate is sitting on a boat's deck.
+   *
+   * Cargo aboard is not a floor obstacle. A deck loaded on a 120 cm pitch would
+   * be solid to the pathfinder — the machine could not reach a single crate on
+   * it — and a boat that fills far-end-first like a trailer is not a boat, it
+   * is a trailer. So a machine drives across the deck and takes the nearest.
+   */
+  onBoat?: boolean;
   /** Collision half-extent. Deliberately a little LARGER than the art. */
   radius: number;
 }
 
+/**
+ * The upgrade room, north of the building.
+ *
+ * Reached by driving a machine through a doorway in the north wall. Its south
+ * wall IS the building's north wall, so the room reads as bolted onto the back
+ * rather than floating in the dark. Placed clear of the display boards to the
+ * west and of every loading bay to the east.
+ */
+/**
+ * Which lines get a plate, and in what order.
+ *
+ * Kept here rather than derived from the upgrade table so the floor plan is a
+ * level decision: the room has twelve positions and the table may grow past
+ * them.
+ */
+export const SHOP_PLATE_ORDER = [
+  'chargePoint', 'queue', 'autoCharge', 'autoPickup', 'autoDeliver', 'bot',
+  'speed', 'battery', 'deck', 'weight', 'autoDispatch', 'dock',
+] as const;
+
+export const SHOP_ROOM = { x0: 4300, y0: -1560, x1: 6900, y1: -260 } as const;
+/** Gap cut in the north wall, and the corridor through it. */
+export const SHOP_DOOR = { x: 5600, width: 640 } as const;
+
+/**
+ * The free trickle socket.
+ *
+ * A fixture by the shop door, not something bought. It charges at a fraction of
+ * a commissioned point's rate and is never billed, which is what guarantees a
+ * machine can always get moving again — the cost is the shift time it eats, not
+ * money. It is also what makes the first charge point sell itself: a player
+ * watching half a day go into a wall socket does not need telling.
+ */
+export const TRICKLE_SOCKET = { x: SHOP_DOOR.x - 620, y: FLOOR.y + 300, size: 260 } as const;
+
+/** A purchase point on the shop floor. */
+export interface ShopPlate {
+  x: number;
+  y: number;
+  size: number;
+  /** Which line of the upgrade table it sells. */
+  upgrade: string;
+}
+
+/** Radius within which a machine counts as standing on a purchase point. */
+export const SHOP_PLATE_TRIGGER = 105;
+
+/**
+ * Lays the purchase points out in two rows.
+ *
+ * Order matters: the row nearest the door is what a player meets first, so the
+ * lines that come earliest in the game go there.
+ */
+export function buildShopPlates(ids: readonly string[]): ShopPlate[] {
+  const plates: ShopPlate[] = [];
+  const cols = 6;
+  const spacing = 400;
+  const left = (SHOP_ROOM.x0 + SHOP_ROOM.x1) / 2 - ((cols - 1) * spacing) / 2;
+  const rows = [SHOP_ROOM.y1 - 480, SHOP_ROOM.y1 - 920];
+  for (let i = 0; i < ids.length; i++) {
+    plates.push({
+      x: left + (i % cols) * spacing,
+      y: rows[Math.min(rows.length - 1, Math.floor(i / cols))],
+      size: 220,
+      upgrade: ids[i],
+    });
+  }
+  return plates;
+}
+
 export interface LevelGeometry {
+  shopPlates: ShopPlate[];
   plates: DockPlate[];
   chargers: ChargePad[];
   columns: Column[];
@@ -462,8 +542,9 @@ export function buildLevelGeometry(seed: number): LevelGeometry {
 
   const props = buildProps(rng, columns, bays);
   const plates = buildDockPlates(bays);
+  const shopPlates = buildShopPlates(SHOP_PLATE_ORDER);
   const chargers = buildChargePads();
-  return { columns, lamps, skylights, props, bays, plates, chargers };
+  return { columns, lamps, skylights, props, bays, plates, chargers, shopPlates };
 }
 
 /**

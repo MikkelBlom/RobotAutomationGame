@@ -99,7 +99,7 @@ export class DebugPanel {
       this.suppressTimeSync = true;
       game.clock.hour = v;
     }, (v) => formatHour(v));
-    this.slider('day length', 20, 900, 5, s.dayLengthSeconds, (v) => {
+    this.slider('day length', 60, 3600, 20, s.dayLengthSeconds, (v) => {
       s.dayLengthSeconds = v;
     }, (v) => `${Math.round(v)}s`);
     this.checkbox('freeze time', s.timePaused, (v) => {

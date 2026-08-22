@@ -5,7 +5,7 @@ import {
   shapeSize,
   type CrateMaterialValue,
   type CrateShapeValue,
-  type HaulerClassValue,
+  type CapabilityValue,
 } from './cargo';
 import { crateValue } from './economy';
 import { SLOT_COUNT } from './trailers';
@@ -217,7 +217,7 @@ export const RATE_CONSTANTS: RateConstants = {
 
 export interface RateModelRobot {
   /** What it is rated to move. Decides which crates it can even see. */
-  hauler: HaulerClassValue;
+  hauler: CapabilityValue;
   /** Charge, 0 to 1. */
   battery: number;
   /** Rated speed in cm/s (`BotPool.speed`). */
@@ -529,7 +529,7 @@ const STAGES: readonly RateStage[] = [dockStage];
  * O(n) in it.
  */
 interface Cohort {
-  hauler: HaulerClassValue;
+  hauler: CapabilityValue;
   count: number;
   speed: number;
   turnRate: number;
@@ -564,7 +564,7 @@ interface Lane {
   material: CrateMaterialValue;
   shape: CrateShapeValue;
   /** Hauler classes present in the fleet that can lift this kind. */
-  servers: Set<HaulerClassValue>;
+  servers: Set<CapabilityValue>;
   /** Cohorts working this lane in the current segment. */
   crew: Cohort[];
   /** Crate indices, nearest bay-to-crate route first. */

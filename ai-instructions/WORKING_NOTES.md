@@ -610,3 +610,46 @@ inflow.
 **Fragility to fix at some point**: every timing constant the model needs is
 module-private in `bots.ts`/`trailers.ts` and is mirrored in `RATE_CONSTANTS`.
 Exporting them would remove the whole class of drift.
+
+## Building the intro, the shop and the water (2026-08-22)
+
+**Capability is a packed integer.** `deck * 100 + weight`. Packed rather than a
+pair of fields so it can live in a typed array beside the rest of the robot
+state AND be a Set key where something asks which capabilities can serve a
+crate. `Uint16Array`, not `Uint8` — a full-deck heavy hauler is 402.
+
+**The boat's cargo is injected into `level.props`.** Tagged `onBoat`. That makes
+collecting from a deck go through exactly the same code as collecting from the
+floor: order marks, approach, nav, animation, all of it. Deck cargo is skipped
+by the nav grid and by the overlap resolver, because a deck loaded on a 120 cm
+pitch would be solid to the pathfinder and nothing could reach a single crate.
+
+**Three geometry traps in the boarding ramps**, all of which made the deck an
+unreachable island:
+1. The ramp must clear the WATER CLEARANCE margin, not just the gap to the
+   jetty. Robots are held back from the edge by their radius plus the margin, so
+   a ramp that merely touched the jetty landed on ground the pathfinder already
+   refuses. 210 cm of gap needed a 520 cm ramp.
+2. The deck and ramp regions must OVERLAP. Both are inset by a robot radius when
+   the pathfinder asks, and two regions that merely touch leave a band between
+   them belonging to neither.
+3. `inBayCorridor` measured the back of a trailer from `NAV.y0`. Extending the
+   grid north for the upgrade room silently extended every trailer with it.
+
+**Drain off must not mean refill.** The upgrade room stops battery drain by
+passing `drainEnabled: false`, which the debug toggle had implemented as
+`battery = 1`. The room was quietly topping every machine up, which would have
+made the whole battery pointless. They are separate concerns now.
+
+**Atlas rows fill up silently.** `shopFloor` and `shopPlate` were dropped at
+[512,1024] and [768,1024], both already taken, so the upgrade room came out
+tiled with sealed charging cabinets. There is a row map in `atlas.ts`; check it
+before adding a cell.
+
+**Draw order: `drawUnder` before props.** A boat hull and a shop floor are
+things other objects stand ON. Drawn in the same pass as the machines, the hull
+covered its own cargo.
+
+**Purchases have to apply while you are still standing there.** The shop's early
+return skipped `applyChargeUnlocks`, so a commissioned point stayed sealed until
+the machine drove back out.

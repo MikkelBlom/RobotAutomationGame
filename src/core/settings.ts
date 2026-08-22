@@ -38,7 +38,9 @@ export interface Settings {
 
 export function defaultSettings(): Settings {
   return {
-    dayLengthSeconds: 240,
+    // One real second is one in-game minute. The shift runs 07:00 to midnight,
+    // which is seventeen real minutes of play.
+    dayLengthSeconds: 1440,
     timePaused: false,
 
     lighting: true,

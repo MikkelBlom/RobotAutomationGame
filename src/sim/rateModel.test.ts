@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { BATTERY_DEAD } from './bots';
-import { CrateMaterial, CrateShape, HaulerClass, crateRadius } from './cargo';
+import { CrateMaterial, CrateShape, HAULER, crateRadius } from './cargo';
 import { buildLevelGeometry } from './level';
 import { SLOT_COUNT, TrailerFleet } from './trailers';
 import {
@@ -36,7 +36,7 @@ function bay(overrides: Partial<RateModelBay> = {}): RateModelBay {
 }
 
 function robot(overrides: Partial<RateModelRobot> = {}): RateModelRobot {
-  return { hauler: HaulerClass.Standard, battery: 1, speed: 560, turnRate: 3.6, ...overrides };
+  return { hauler: HAULER.Standard, battery: 1, speed: 560, turnRate: 3.6, ...overrides };
 }
 
 /** `n` timber pallets, all the same distance out from the bay. */
@@ -298,7 +298,7 @@ describe('the warehouse floor', () => {
       shape: CrateShape.Unit,
     }));
     const result = projectProduction(
-      world({ crates, robots: [robot({ hauler: HaulerClass.Standard })] }),
+      world({ crates, robots: [robot({ hauler: HAULER.Standard })] }),
       HOUR,
     );
     expect(result.cratesTaken).toBe(0);
@@ -325,7 +325,7 @@ describe('the warehouse floor', () => {
     );
     const pair = projectProduction(
       world({
-        robots: [robot(), robot({ hauler: HaulerClass.Heavy })],
+        robots: [robot(), robot({ hauler: HAULER.Heavy })],
         crates,
         constants: NO_TURNAROUND,
       }),
@@ -365,7 +365,7 @@ describe('the warehouse floor', () => {
       shape: CrateShape.Unit,
     }));
     const result = projectProduction(
-      world({ crates, robots: [robot({ hauler: HaulerClass.Heavy })], constants: NO_TURNAROUND }),
+      world({ crates, robots: [robot({ hauler: HAULER.Heavy })], constants: NO_TURNAROUND }),
       HOUR,
     );
     expect(result.breakdown.unliftableCrates).toBe(0);
@@ -702,10 +702,10 @@ describe('assumptions about the level', () => {
     const result = projectProduction(
       world({
         robots: [
-          robot({ hauler: HaulerClass.Standard }),
-          robot({ hauler: HaulerClass.Long }),
-          robot({ hauler: HaulerClass.Big }),
-          robot({ hauler: HaulerClass.Heavy }),
+          robot({ hauler: HAULER.Standard }),
+          robot({ hauler: HAULER.Long }),
+          robot({ hauler: HAULER.Big }),
+          robot({ hauler: HAULER.Heavy }),
         ],
         crates: level.props.map((p) => ({
           x: p.x,

@@ -1,7 +1,10 @@
 import {
+  APRON,
   BAY_WIDTH,
   FLOOR,
   inWater,
+  SHOP_DOOR,
+  SHOP_ROOM,
   TRAILER_DEPTH,
   TRAILER_WIDTH,
   WALL_THICKNESS,
@@ -29,12 +32,22 @@ const CELL = 60;
  * it covered only the slab, the trailer interiors were literally outside the
  * pathfinder and no route into a bay could ever be found.
  */
+/**
+ * Ground the grid covers: the slab, plus everything north of it a machine can
+ * reach — trailer interiors and the upgrade room.
+ *
+ * Taken from the apron rather than from the trailer depth, so adding another
+ * room out here needs no change to the bounds.
+ */
 const NAV = {
   x0: FLOOR.x,
-  y0: FLOOR.y - WALL_THICKNESS - TRAILER_DEPTH,
+  y0: FLOOR.y - WALL_THICKNESS - APRON.north,
   w: FLOOR.w,
-  h: FLOOR.h + WALL_THICKNESS + TRAILER_DEPTH,
+  h: FLOOR.h + WALL_THICKNESS + APRON.north,
 } as const;
+
+/** How far back a trailer's interior reaches, in world y. */
+const TRAILER_BACK = FLOOR.y - WALL_THICKNESS - TRAILER_DEPTH;
 
 /**
  * What a penalised cell costs, as a multiple of a plain one.
@@ -43,6 +56,27 @@ const NAV = {
  * that a robot boxed in on penalised ground can still get out.
  */
 const AVOID_COST = 14;
+
+/**
+ * The upgrade room and the corridor through the wall into it.
+ *
+ * Its own function rather than a member because it depends on nothing but the
+ * level's fixed geometry — the room is never sealed, unlike a bay.
+ */
+function inShop(x: number, y: number, botRadius: number): boolean {
+  const edge = botRadius + 24;
+  if (
+    x > SHOP_ROOM.x0 + edge &&
+    x < SHOP_ROOM.x1 - edge &&
+    y > SHOP_ROOM.y0 + edge &&
+    y < SHOP_ROOM.y1
+  ) {
+    return true;
+  }
+  // The doorway, cut through the wall band between the room and the slab.
+  const half = SHOP_DOOR.width / 2 - botRadius;
+  return half > 0 && Math.abs(x - SHOP_DOOR.x) < half && y >= SHOP_ROOM.y1 && y <= FLOOR.y;
+}
 
 export class NavGrid {
   readonly cell = CELL;
@@ -73,6 +107,8 @@ export class NavGrid {
   private cargoBlocks: Array<{ x: number; y: number; r: number }> = [];
   private columns: Column[] = [];
   private props: Prop[] = [];
+  /** Where a berthed boat currently offers deck to drive on. */
+  private aboard: ((x: number, y: number, pad: number) => boolean) | null = null;
   private searchId = 0;
   private heapSize = 0;
 
@@ -92,6 +128,11 @@ export class NavGrid {
     this.botRadius = botRadius;
     this.bays = bays;
     this.rasterise(columns, props, botRadius);
+  }
+
+  /** Tells the grid where a boat's deck is, or null when there is none. */
+  setBoatDeck(aboard: ((x: number, y: number, pad: number) => boolean) | null): void {
+    this.aboard = aboard;
   }
 
   /**
@@ -186,7 +227,9 @@ export class NavGrid {
     for (const bay of this.bays) {
       if (Math.abs(x - bay.x) > half) continue;
       // Empty bays are sealed; only a docked trailer is drivable.
-      const back = bay.occupied ? NAV.y0 + botRadius + 40 : FLOOR.y - WALL_THICKNESS;
+      // Measured from the trailer, not from the grid: the grid now reaches
+      // further north than any trailer does, to take in the upgrade room.
+      const back = bay.occupied ? TRAILER_BACK + botRadius + 40 : FLOOR.y - WALL_THICKNESS;
       if (y >= back) return true;
     }
     return false;
@@ -197,8 +240,9 @@ export class NavGrid {
     const botRadius = this.botRadius;
 
     if (wy < FLOOR.y) {
-      // North of the slab: only a bay corridor is drivable, everything else
-      // out here is wall or the dark apron.
+      // North of the slab: a bay corridor, or the upgrade room and the doorway
+      // through to it. Everything else out here is wall or dark apron.
+      if (inShop(wx, wy, botRadius)) return false;
       if (!this.inBayCorridor(wx, wy, botRadius)) return true;
       // Crates already loaded into a trailer are obstacles like any other.
       for (const c of this.cargoBlocks) {
@@ -213,11 +257,15 @@ export class NavGrid {
       wx < FLOOR.x + edge ||
       wx > FLOOR.x + FLOOR.w - edge ||
       wy > FLOOR.y + FLOOR.h - edge ||
-      // The north edge margin must not seal the bay mouths.
-      (wy < FLOOR.y + edge && !this.inBayCorridor(wx, FLOOR.y - 1, botRadius))
+      // The north edge margin must not seal the bay mouths, nor the shop door.
+      (wy < FLOOR.y + edge &&
+        !this.inBayCorridor(wx, FLOOR.y - 1, botRadius) &&
+        !inShop(wx, FLOOR.y - 1, botRadius))
     ) {
       return true;
     }
+    // A berthed boat's deck and ramps are ground like any other.
+    if (this.aboard?.(wx, wy, -botRadius)) return false;
     if (inWater(wx, wy, WATER_CLEARANCE + botRadius)) return true;
 
     for (const col of this.columns) {
@@ -225,12 +273,35 @@ export class NavGrid {
       if (Math.abs(wx - col.x) < half && Math.abs(wy - col.y) < half) return true;
     }
     for (const prop of this.props) {
+      if (prop.onBoat) continue;
       const reach = prop.radius + botRadius;
       const dx = wx - prop.x;
       const dy = wy - prop.y;
       if (dx * dx + dy * dy < reach * reach) return true;
     }
     return false;
+  }
+
+  /**
+   * Re-rasterises one world rectangle.
+   *
+   * For things that change a bounded patch of ground during play — a boat
+   * berthing, its cargo coming off — where a full rebuild's seventy
+   * milliseconds would be a visible hitch.
+   */
+  rebuildRegion(x0: number, y0: number, x1: number, y1: number): void {
+    const edge = this.botRadius + 30;
+    const cx0 = Math.max(0, Math.floor((x0 - NAV.x0) / CELL));
+    const cx1 = Math.min(this.cols - 1, Math.ceil((x1 - NAV.x0) / CELL));
+    const cy0 = Math.max(0, Math.floor((y0 - NAV.y0) / CELL));
+    const cy1 = Math.min(this.rows - 1, Math.ceil((y1 - NAV.y0) / CELL));
+    for (let cy = cy0; cy <= cy1; cy++) {
+      const wy = NAV.y0 + (cy + 0.5) * CELL;
+      for (let cx = cx0; cx <= cx1; cx++) {
+        const wx = NAV.x0 + (cx + 0.5) * CELL;
+        this.blocked[cy * this.cols + cx] = this.testCell(wx, wy, edge) ? 1 : 0;
+      }
+    }
   }
 
   private rasterise(columns: Column[], props: Prop[], botRadius: number): void {

@@ -124,6 +124,17 @@ const CELLS = {
   /** Contact glow for a live point. */
   chargeGlow: [1024, 1024, 256, 256],
 
+  /**
+   * Shop floor tile, and a purchase point.
+   *
+   * Row 1792, not 1024: 1024 is full and these two silently landed on top of
+   * chargeDockSealed and chargePad, so the upgrade room came out tiled with
+   * sealed charging cabinets. Anything added here wants checking against the
+   * map above first.
+   */
+  shopFloor: [0, 1792, 256, 256],
+  shopPlate: [256, 1792, 256, 256],
+
   /** Digits and the few marks the quota board needs, 16 across. */
   glyphs: [0, 1280, 2048, 128],
   /** Quota board housing: bezel, dividers, mounting. Unlit. */
@@ -224,6 +235,7 @@ export function buildAtlas(seed: number): HTMLCanvasElement {
   drawCrateVariants(ctx, seed);
   drawCrateOutline(ctx);
   drawChargeStrip(ctx);
+  drawShopSurfaces(ctx, makeRng(seed ^ 0x3c19));
   drawChargeArm(ctx);
   drawSpark(ctx);
   drawChargeDock(ctx, false);
@@ -1732,5 +1744,73 @@ function drawSpark(ctx: CanvasRenderingContext2D): void {
     ctx.stroke();
   }
   ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+/**
+ * The upgrade room's floor, and its purchase points.
+ *
+ * Deliberately plainer than the warehouse: painted concrete rather than a slab
+ * that has been worked on for years. The room is new; the building is not.
+ */
+function drawShopSurfaces(ctx: CanvasRenderingContext2D, rng: ReturnType<typeof makeRng>): void {
+  const floor = cell(ctx, 'shopFloor');
+  const half = floor.size / 2;
+  ctx.fillStyle = '#3a3f45';
+  ctx.fillRect(-half, -half, floor.size, floor.size);
+  ctx.strokeStyle = 'rgba(255,255,255,0.045)';
+  ctx.lineWidth = 3;
+  for (let i = 1; i < 4; i++) {
+    const at = -half + (i * floor.size) / 4;
+    ctx.beginPath();
+    ctx.moveTo(-half, at);
+    ctx.lineTo(half, at);
+    ctx.moveTo(at, -half);
+    ctx.lineTo(at, half);
+    ctx.stroke();
+  }
+  for (let i = 0; i < 40; i++) {
+    ctx.globalAlpha = rng.range(0.03, 0.10);
+    ctx.fillStyle = rng.chance(0.5) ? '#20242a' : '#585f68';
+    ctx.beginPath();
+    ctx.ellipse(rng.range(-half, half), rng.range(-half, half),
+      rng.range(8, 40), rng.range(6, 30), rng.range(0, TAU), 0, TAU);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+
+  const plate = cell(ctx, 'shopPlate');
+  const ph = plate.size * 0.42;
+  ctx.fillStyle = '#171a1e';
+  ctx.beginPath();
+  ctx.roundRect(-ph - 6, -ph - 6, ph * 2 + 12, ph * 2 + 12, 8);
+  ctx.fill();
+  ctx.fillStyle = '#495159';
+  ctx.beginPath();
+  ctx.roundRect(-ph, -ph, ph * 2, ph * 2, 6);
+  ctx.fill();
+  // A ring on the tread, so it reads as somewhere to stand rather than a hatch.
+  ctx.strokeStyle = 'rgba(255,255,255,0.16)';
+  ctx.lineWidth = 7;
+  ctx.beginPath();
+  ctx.arc(0, 0, ph * 0.58, 0, TAU);
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  for (let i = -3; i <= 3; i++) {
+    ctx.moveTo(-ph + 8, i * (ph / 3.4));
+    ctx.lineTo(ph - 8, i * (ph / 3.4));
+  }
+  ctx.stroke();
+  ctx.fillStyle = '#23272c';
+  for (const sx of [-1, 1]) {
+    for (const sy of [-1, 1]) {
+      ctx.beginPath();
+      ctx.arc(sx * (ph - 9), sy * (ph - 9), 5, 0, TAU);
+      ctx.fill();
+    }
+  }
   ctx.restore();
 }

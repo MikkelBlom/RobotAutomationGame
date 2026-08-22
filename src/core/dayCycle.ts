@@ -186,11 +186,21 @@ export function daylightAmount(hour: number): number {
   return smoothstep(5.2, 8.0, hour) * (1 - smoothstep(17.8, 20.6, hour));
 }
 
+/** The shift runs from here to midnight. */
+export const SHIFT_START = 7;
+
 export class DayClock {
   /** Current time of day in hours. */
-  hour = 9.5;
-  /** Real seconds for one full in-game day. */
-  dayLengthSeconds = 240;
+  hour = SHIFT_START;
+  /**
+   * Real seconds for one full in-game day.
+   *
+   * One real second is one in-game minute. That rate is chosen to be readable
+   * rather than to fill the day with work: a shift is meant to have slack in
+   * it, for driving about, looking at things, and later for pulling an assembly
+   * line apart without a new quota landing every few minutes.
+   */
+  dayLengthSeconds = 1440;
   paused = false;
   /** Days elapsed. Counted rather than inferred, so scrubbing time is safe. */
   day = 0;
@@ -198,8 +208,20 @@ export class DayClock {
   advance(dt: number): void {
     if (this.paused || this.dayLengthSeconds <= 0) return;
     const next = this.hour + (dt / this.dayLengthSeconds) * 24;
-    if (next >= 24) this.day += Math.floor(next / 24);
-    this.hour = next % 24;
+    if (next >= 24) {
+      // Midnight closes the day. The small hours are not played through —
+      // nothing happens in them and they are not worth the wait — so the clock
+      // is put straight to the start of the next shift.
+      this.day += Math.floor(next / 24);
+      this.hour = SHIFT_START;
+      return;
+    }
+    this.hour = next;
+  }
+
+  /** Real seconds left in the working day. */
+  secondsLeft(): number {
+    return Math.max(0, ((24 - this.hour) / 24) * this.dayLengthSeconds);
   }
 
   state(): LightingState {

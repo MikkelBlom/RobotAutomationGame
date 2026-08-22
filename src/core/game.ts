@@ -3,17 +3,25 @@ import { DayClock } from './dayCycle';
 import { Input } from './input';
 import { defaultSettings, type Settings } from './settings';
 import { EntityRenderer, MarkKind, type PlanMark } from '../render/entities';
+import { ShopRenderer } from '../render/shopRoom';
 import { Renderer } from '../render/renderer';
 import { BOT_LENGTH, BOT_RADIUS, BotPool, BotTask, OrderKind } from '../sim/bots';
 import {
-  buildLevelGeometry, CHARGE_PAD_H, CHARGE_PAD_W, PLATE_TRIGGER, SPAWN,
-  type ChargePad, type LevelGeometry, type Prop,
+  buildLevelGeometry, CHARGE_PAD_H, CHARGE_PAD_W, PLATE_TRIGGER, SHOP_PLATE_TRIGGER,
+  SHOP_ROOM, SPAWN, TRICKLE_SOCKET, type ChargePad, type LevelGeometry, type Prop,
 } from '../sim/level';
 import { Sfx } from '../audio/sfx';
+import { BoatDock, BOAT_H, BOAT_W, BOAT_X, BOAT_Y, RAMP_REACH } from '../sim/boats';
 import { Ledger } from '../sim/economy';
+import {
+  Progress, quotaForDay, quotaMet, quotaRemaining, quotaRequired, quotaShipped,
+  UPGRADE_BY_ID, CHARGE_PRICE,
+} from '../sim/progress';
 import { NavGrid } from '../sim/navGrid';
 import { SLOT_COUNT, TrailerFleet, type Trailer } from '../sim/trailers';
-import { canLift, type CrateMaterialValue, type CrateShapeValue, type HaulerClassValue } from '../sim/cargo';
+import {
+  canLift, crateRadius, HAULER, shapeSize, type CrateMaterialValue, type CrateShapeValue,
+} from '../sim/cargo';
 
 const EDGE_PAN_MARGIN = 58;
 const PAN_SPEED = 1750;
@@ -26,6 +34,17 @@ const CLICK_PICK_RADIUS = 110;
  * confetti, so there is no point paying to build them all.
  */
 const MAX_PLAN_MARKS = 40;
+
+/** How long a machine must stand on a purchase point for it to register. */
+const SHOP_DWELL = 0.9;
+/** What a missed day costs. A fine, never the run. */
+const MISSED_QUOTA_FINE = 400;
+/** Crates a boat brings. Enough to cover a quota and leave something over. */
+const BOAT_LOAD = 22;
+/** The rated speed every machine starts with, before the speed line. */
+const BASE_SPEED = 560;
+/** What a machine is rated for out of the box: one pallet of timber. */
+const HAULER_BASE = HAULER.Standard;
 
 /** How often the background clock asks for a tick, in milliseconds. */
 const BACKGROUND_TICK_MS = 250;
@@ -69,6 +88,25 @@ export class Game {
   /** Procedural sound. Silent until the first click or keypress wakes it. */
   readonly sfx = new Sfx();
 
+  /** Money, the electricity account, the quota, and everything purchasable. */
+  readonly progress = new Progress();
+  /** The water. Nothing arrives until the port is open for business. */
+  readonly boats: BoatDock;
+  private readonly shopRender = new ShopRenderer();
+  /**
+   * True while a machine is inside the upgrade room.
+   *
+   * Everything stops: the clock, the trailers, the boat, the batteries. The
+   * room is a place to think, and the price of thinking is the drive there and
+   * back, which costs real shift time and real charge.
+   */
+  shopping = false;
+  /** Purchase points the player is standing on, and for how long. */
+  private readonly plateHold = new Map<string, number>();
+  private readonly plateLatch = new Set<string>();
+  /** What was last bought, so the room can say so without a menu. */
+  lastPurchase: { plate: string; level: number; at: number } | null = null;
+
   /** Shift figures, shown on the board on the north wall. */
   readonly ledger = new Ledger();
 
@@ -98,6 +136,7 @@ export class Game {
     // The bake needs the bays before anything else, so the level is built first.
     this.level = buildLevelGeometry(seed);
     this.trailers = new TrailerFleet(this.level.bays, seed);
+    this.boats = new BoatDock(seed);
     this.renderer = new Renderer(container, seed, this.level.bays);
     this.camera = new Camera(SPAWN.x, SPAWN.y, 0.30);
     this.input = new Input(this.renderer.canvas);
@@ -127,11 +166,27 @@ export class Game {
     window.addEventListener('keydown', wake);
     this.trailers.onDeparted = (load) => {
       this.ledger.ship(load);
+      for (const crate of load) {
+        if (crate) this.progress.ship(crate.material, crate.shape);
+      }
+      // The first load away is what opens the shop, and the water after it.
+      this.progress.shopOpen = true;
+      this.progress.waterOpen = true;
+      this.boats.open = true;
       this.sfx.money();
+    };
+    this.boats.onSound = (what) => {
+      if (what === 'ramps') this.sfx.doors();
+      else if (what === 'arrive') this.sfx.arrive();
+      else this.sfx.depart();
     };
     this.bots.onResolveDrop = this.resolveDrop;
     this.bots.setProps(this.level.props);
     this.bots.setChargers(this.level.chargers);
+    this.bots.setTrickle((x, y) =>
+      Math.abs(x - TRICKLE_SOCKET.x) < TRICKLE_SOCKET.size / 2 &&
+      Math.abs(y - TRICKLE_SOCKET.y) < TRICKLE_SOCKET.size / 2);
+    this.applyUpgrades();
     // Dispatch plates are passable but penalised: crossing one on the way past
     // sends a trailer away by accident.
     this.nav.setAvoidZones(
@@ -195,6 +250,9 @@ export class Game {
         }
       }
     }
+    // A machine that arrives after an upgrade was bought still gets the global
+    // ones. The per-bot lines it has to earn for itself.
+    this.applyUpgrades();
     return added;
   }
 
@@ -331,8 +389,22 @@ export class Game {
         this.entities.drawGlow(batch, bounds, lighting, time);
         this.entities.drawTrails(batch, bounds, time, this.settings);
         this.entities.drawCharge(batch, bounds, time);
+        this.shopRender.collectSigns(
+          batch, bounds, this.level.shopPlates, this.progress, this.signBot(),
+        );
       },
       ledger: this.ledger,
+      shift: {
+        shipped: quotaShipped(this.progress.quota),
+        required: quotaRequired(this.progress.quota),
+        money: this.progress.money,
+        tab: this.progress.tab,
+      },
+      drawUnder: (batch, bounds) => {
+        this.shopRender.collect(batch, bounds, this.level.shopPlates);
+        this.shopRender.collectBoat(batch, this.boats.boat, bounds);
+        this.shopRender.collectBoatCargo(batch, this.boats.boat, bounds);
+      },
       drawMarks: (batch, bounds) => {
         this.entities.drawPlanMarks(batch, bounds, this.buildPlan(), time);
       },
@@ -341,9 +413,29 @@ export class Game {
   }
 
   private update(dt: number): void {
+    // Inside the upgrade room everything stops — the clock, the road, the
+    // water, the batteries. It is a place to think, and thinking is not meant
+    // to cost a shift. It is not an idle spot either, because production stops
+    // with everything else.
+    this.shopping = this.anyoneShopping();
+    this.updateShop(dt);
+    if (this.shopping) {
+      // What was just bought has to take effect now, not when the machine gets
+      // back out — a player who buys a charge point wants to see the bay light
+      // up while they are standing there.
+      this.applyChargeUnlocks();
+      this.updateCamera(dt);
+      this.updateSelection();
+      this.updateOrders();
+      this.bots.update(dt * this.settings.simSpeed, this.nav, false, this.takeProp);
+      return;
+    }
+
     this.clock.paused = this.settings.timePaused;
     this.clock.dayLengthSeconds = this.settings.dayLengthSeconds;
+    const wasDay = this.clock.day;
     this.clock.advance(dt * this.settings.simSpeed);
+    if (this.clock.day !== wasDay) this.closeDay();
     this.ledger.syncDay(this.clock.day, this.elapsed);
 
     // Trailers coming and going change which bays can be driven into. Only the
@@ -357,6 +449,8 @@ export class Game {
     )) {
       this.nav.rebuildBayCorridors(this.level.bays, this.trailerCargoBlocks());
     }
+    this.updateWater(dt * this.settings.simSpeed, hours);
+    this.billPower(dt * this.settings.simSpeed);
 
     this.updateCamera(dt);
     this.updateSelection();
@@ -366,6 +460,238 @@ export class Game {
     this.bots.update(
       dt * this.settings.simSpeed, this.nav, this.settings.batteryDrain, this.takeProp,
     );
+    // The debug toggle is the one thing that really does keep them full.
+    if (!this.settings.batteryDrain) this.bots.battery.fill(1, 0, this.bots.count);
+  }
+
+  /**
+   * Rolls the day over.
+   *
+   * A missed quota costs money and is counted, and that is all. There is no
+   * game over: an incremental that can be lost from a bad afternoon is one
+   * nobody leaves running.
+   */
+  private closeDay(): void {
+    if (!quotaMet(this.progress.quota)) {
+      this.progress.missedDays++;
+      this.progress.bill(MISSED_QUOTA_FINE);
+    }
+    this.progress.quota = quotaForDay(this.clock.day + 1);
+  }
+
+  /**
+   * The water.
+   *
+   * A boat's cargo is injected into the floor's crate list while it is berthed,
+   * so collecting from a deck goes through exactly the same code as collecting
+   * from the floor — the order marks, the approach, the nav, all of it. What is
+   * left aboard when it casts off goes with it.
+   */
+  private updateWater(dt: number, hours: number): void {
+    const boat = this.boats.boat;
+    const wasBoarding = BoatDock.isBoarding(boat);
+
+    // Supply answers demand: if the floor can no longer cover what the day
+    // still needs, the next boat is called forward. This is the rule that makes
+    // it impossible to be starved of work, and it must never be tied to a
+    // purchase the player might not have made.
+    if (this.progress.waterOpen && this.liftableOnFloor() < quotaRemaining(this.progress.quota)) {
+      this.boats.callEarly();
+    }
+
+    const changed = this.boats.update(dt, hours, this.robotAboard, BOAT_LOAD);
+    const boarding = BoatDock.isBoarding(boat);
+    if (boarding && !wasBoarding) this.loadDeck();
+    if (!boarding && wasBoarding) this.clearDeck();
+    if (changed) {
+      this.nav.setBoatDeck(boarding ? (x, y, pad) => BoatDock.aboard(boat, x, y, pad) : null);
+      this.nav.rebuildRegion(
+        BOAT_X - BOAT_W, BOAT_Y - BOAT_H / 2 - RAMP_REACH - 200,
+        BOAT_X + BOAT_W, BOAT_Y + BOAT_H / 2 + RAMP_REACH + 200,
+      );
+    }
+  }
+
+  /** Puts the berthed boat's cargo on the floor list, tagged as being aboard. */
+  private loadDeck(): void {
+    const boat = this.boats.boat;
+    for (let slot = 0; slot < boat.cargo.length; slot++) {
+      const load = boat.cargo[slot];
+      if (!load) continue;
+      const pos = BoatDock.slotPosition(slot);
+      const { w, h } = shapeSize(load.shape);
+      this.level.props.push({
+        x: pos.x, y: pos.y, angle: 0,
+        material: load.material, shape: load.shape,
+        w, h, radius: crateRadius(load.shape), onBoat: true,
+      });
+    }
+    this.bots.setProps(this.level.props);
+  }
+
+  /** Takes whatever is still aboard away with the boat. */
+  private clearDeck(): void {
+    const boat = this.boats.boat;
+    const kept = this.level.props.filter((p) => !p.onBoat);
+    if (kept.length !== this.level.props.length) {
+      // Anything still on the deck sails with her.
+      for (let i = 0; i < boat.cargo.length; i++) boat.cargo[i] = null;
+      this.level.props.length = 0;
+      this.level.props.push(...kept);
+      this.bots.setProps(this.level.props);
+      this.rebindTargets();
+    }
+  }
+
+  /**
+   * Drops any order pointing at a crate that has just sailed away.
+   *
+   * targetProp is an index into a list that has just been rewritten, so every
+   * machine working the deck has to be told, or it drives at whatever crate now
+   * holds that index.
+   */
+  private rebindTargets(): void {
+    for (let i = 0; i < this.bots.count; i++) {
+      if (this.bots.task[i] === BotTask.Fetch && this.bots.carryMaterial[i] < 0) {
+        this.bots.clearOrders(i);
+      }
+    }
+  }
+
+  /** How many crates on the floor the fleet can actually lift. */
+  private liftableOnFloor(): number {
+    let n = 0;
+    for (const prop of this.level.props) {
+      for (let i = 0; i < this.bots.count; i++) {
+        if (canLift(this.bots.hauler[i], prop.material, prop.shape)) {
+          n++;
+          break;
+        }
+      }
+    }
+    return n;
+  }
+
+  /** True while anything of ours is on the deck or the ramps. */
+  private robotAboard = (): boolean => {
+    const boat = this.boats.boat;
+    for (let i = 0; i < this.bots.count; i++) {
+      if (BoatDock.aboard(boat, this.bots.x[i], this.bots.y[i], BOT_LENGTH * 0.6)) return true;
+    }
+    return false;
+  };
+
+  /**
+   * Bills the electricity drawn since the last frame.
+   *
+   * Metered against the charge that actually went in, so the price of a shift
+   * is the work it did. Anything unaffordable goes on the account rather than
+   * being refused — see Progress.tab.
+   */
+  private billPower(dt: number): void {
+    if (!this.settings.batteryDrain) return;
+    let drawn = 0;
+    for (let i = 0; i < this.bots.count; i++) {
+      if (!this.bots.charging[i]) continue;
+      // The trickle socket is free; only a commissioned point is metered.
+      if (this.bots.onTrickle[i]) continue;
+      drawn += this.bots.chargedThisFrame[i];
+    }
+    void dt;
+    if (drawn > 0) this.progress.bill(drawn * CHARGE_PRICE);
+  }
+
+  /**
+   * Whose per-bot prices the signs quote.
+   *
+   * The machine in the room, if there is one — the prices that matter are the
+   * ones for the machine standing there, since that is the one that will be
+   * upgraded. Falls back to the first machine so the room reads sensibly when
+   * looked at from outside.
+   */
+  private signBot(): number {
+    for (let i = 0; i < this.bots.count; i++) {
+      if (this.bots.y[i] < SHOP_ROOM.y1 && this.bots.x[i] > SHOP_ROOM.x0 &&
+          this.bots.x[i] < SHOP_ROOM.x1) {
+        return i;
+      }
+    }
+    return 0;
+  }
+
+  /** True when any machine is inside the upgrade room. */
+  private anyoneShopping(): boolean {
+    for (let i = 0; i < this.bots.count; i++) {
+      if (this.bots.y[i] < SHOP_ROOM.y1 && this.bots.x[i] > SHOP_ROOM.x0 &&
+          this.bots.x[i] < SHOP_ROOM.x1) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * The purchase points.
+   *
+   * A machine standing on one buys a level and then latches, so it has to step
+   * off and back on to buy another. That is the same rule the dispatch plate
+   * uses, and it stops a machine parked on a plate emptying the account.
+   */
+  private updateShop(dt: number): void {
+    for (const plate of this.level.shopPlates) {
+      const def = UPGRADE_BY_ID.get(plate.upgrade);
+      if (!def) continue;
+      let standing = -1;
+      for (let i = 0; i < this.bots.count; i++) {
+        const dx = this.bots.x[i] - plate.x;
+        const dy = this.bots.y[i] - plate.y;
+        if (dx * dx + dy * dy < SHOP_PLATE_TRIGGER * SHOP_PLATE_TRIGGER) {
+          standing = i;
+          break;
+        }
+      }
+      if (standing < 0) {
+        this.plateHold.delete(plate.upgrade);
+        this.plateLatch.delete(plate.upgrade);
+        continue;
+      }
+      if (this.plateLatch.has(plate.upgrade)) continue;
+
+      const held = (this.plateHold.get(plate.upgrade) ?? 0) + dt;
+      this.plateHold.set(plate.upgrade, held);
+      if (held < SHOP_DWELL) continue;
+      this.plateLatch.add(plate.upgrade);
+      this.plateHold.set(plate.upgrade, 0);
+
+      if (!this.progress.visible(def)) {
+        this.sfx.refuse();
+        continue;
+      }
+      const level = this.progress.buy(def, standing);
+      if (level === 0) {
+        this.sfx.refuse();
+        continue;
+      }
+      this.lastPurchase = { plate: plate.upgrade, level, at: this.elapsed };
+      this.sfx.money();
+      this.applyUpgrades();
+    }
+  }
+
+  /**
+   * Pushes bought levels onto the machines.
+   *
+   * Recomputed wholesale rather than applied as deltas: an upgrade is a level
+   * number, and a machine's stats are a function of those numbers, so there is
+   * nothing to keep in step.
+   */
+  private applyUpgrades(): void {
+    const queue = this.progress.levelOf('queue');
+    for (let i = 0; i < this.bots.count; i++) {
+      this.bots.queueMax[i] = queue;
+      this.bots.speed[i] = BASE_SPEED * (1 + 0.16 * this.progress.botLevelOf(i, 'speed'));
+      this.bots.hauler[i] = this.progress.capabilityOf(i, HAULER_BASE);
+    }
   }
 
   private updateCamera(dt: number): void {
@@ -528,7 +854,9 @@ export class Game {
 
   /** Commissions charging points from the south end, per the debug setting. */
   private applyChargeUnlocks(): void {
-    const n = this.settings.chargePoints;
+    // Commissioned points are bought, not configured. The debug slider only
+    // raises the floor, so it can still be used to look at the run.
+    const n = Math.max(this.settings.chargePoints, this.progress.levelOf('chargePoint'));
     for (const pad of this.level.chargers) pad.unlocked = pad.index < n;
   }
 
@@ -804,7 +1132,7 @@ export class Game {
       // Prefer a machine rated for it and with a free deck, so selecting a
       // squad does not hand the job to a loaded robot standing slightly nearer.
       const rated = (i: number): boolean =>
-        canLift(this.bots.hauler[i] as HaulerClassValue, prop.material, prop.shape);
+        canLift(this.bots.hauler[i], prop.material, prop.shape);
       const free = nearest((i) => rated(i) && this.bots.carryMaterial[i] < 0);
       const able = free >= 0 ? free : nearest(rated);
       if (able < 0 || this.bots.isFlat(able)) {

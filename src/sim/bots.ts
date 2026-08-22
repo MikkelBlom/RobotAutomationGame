@@ -1,5 +1,6 @@
 import { angleDelta, clamp, TAU } from '../core/mathUtils';
-import { CRATE_UNIT, canLift, HaulerClass, type HaulerClassValue } from './cargo';
+import { CRATE_UNIT, canLift, HAULER } from './cargo';
+import { TRICKLE_RATE } from './progress';
 import type { Prop } from './level';
 import type { NavGrid } from './navGrid';
 import { CHARGE_PAD_H, CHARGE_PAD_W, type ChargePad } from './level';
@@ -165,10 +166,25 @@ export class BotPool {
   readonly goalY: Float32Array;
   readonly state: Uint8Array;
   readonly selected: Uint8Array;
+  /**
+   * How many orders this machine may stack behind the one it is running.
+   *
+   * Zero to begin with: one order at a time is the whole of the controls on the
+   * first day, and everything else is introduced one purchase at a time.
+   */
+  readonly queueMax: Uint16Array;
   /** Charge remaining, 0 to 1. */
   readonly battery: Float32Array;
   /** 1 while sitting on a live charging point. */
   readonly charging: Uint8Array;
+  /**
+   * 1 when the charge is coming from the free trickle socket rather than a
+   * commissioned point. Slow, but it can never bankrupt anyone, which is what
+   * makes it impossible to be stranded flat and broke.
+   */
+  readonly onTrickle: Uint8Array;
+  /** Charge taken on this tick, as a fraction. What the meter bills. */
+  readonly chargedThisFrame: Float32Array;
   /** Seconds spent not getting any closer to the current waypoint. */
   readonly stallTime: Float32Array;
   /** Distance to the waypoint last frame, for detecting a stall. */
@@ -191,8 +207,13 @@ export class BotPool {
   /** What is riding on the deck. Material is -1 when the deck is empty. */
   readonly carryMaterial: Int8Array;
   readonly carryShape: Int8Array;
-  /** What this machine is rated to move. */
-  readonly hauler: Uint8Array;
+  /**
+   * What this machine is rated to move, as a packed capability.
+   *
+   * Sixteen bits, not eight: the pack is deck * 100 + weight, so a full-deck
+   * heavy hauler is 402 and would silently wrap in a byte.
+   */
+  readonly hauler: Uint16Array;
   /** Where a delivery is being set down. */
   readonly placeX: Float32Array;
   readonly placeY: Float32Array;
@@ -221,6 +242,7 @@ export class BotPool {
    * the whole fleet — so a sparse map costs far less than a per-robot buffer.
    */
   private chargers: ChargePad[] = [];
+  private trickle: ((x: number, y: number) => boolean) | null = null;
   private readonly paths = new Map<number, ActivePath>();
 
   /**
@@ -259,8 +281,11 @@ export class BotPool {
     this.goalY = new Float32Array(capacity);
     this.state = new Uint8Array(capacity);
     this.selected = new Uint8Array(capacity);
+    this.queueMax = new Uint16Array(capacity);
     this.battery = new Float32Array(capacity);
     this.charging = new Uint8Array(capacity);
+    this.onTrickle = new Uint8Array(capacity);
+    this.chargedThisFrame = new Float32Array(capacity);
     this.stallTime = new Float32Array(capacity);
     this.lastGap = new Float32Array(capacity);
     this.velocity = new Float32Array(capacity);
@@ -273,7 +298,7 @@ export class BotPool {
     this.armExtend = new Float32Array(capacity);
     this.carryMaterial = new Int8Array(capacity);
     this.carryShape = new Int8Array(capacity);
-    this.hauler = new Uint8Array(capacity);
+    this.hauler = new Uint16Array(capacity);
     this.placeX = new Float32Array(capacity);
     this.placeY = new Float32Array(capacity);
     this.placeSlot = new Int32Array(capacity);
@@ -308,7 +333,8 @@ export class BotPool {
     this.armExtend[i] = 0;
     this.carryMaterial[i] = -1;
     this.carryShape[i] = 0;
-    this.hauler[i] = HaulerClass.Standard;
+    this.hauler[i] = HAULER.Standard;
+    this.queueMax[i] = 0;
     this.battery[i] = 1;
     this.charging[i] = 0;
     this.placeSlot[i] = -1;
@@ -338,10 +364,18 @@ export class BotPool {
     (this as { goalY: Float32Array }).goalY = copy(this.goalY, (n) => new Float32Array(n));
     (this as { state: Uint8Array }).state = copy(this.state, (n) => new Uint8Array(n));
     (this as { selected: Uint8Array }).selected = copy(this.selected, (n) => new Uint8Array(n));
+    const nextQueueMax = new Uint16Array(next);
+    nextQueueMax.set(this.queueMax);
+    (this as { queueMax: Uint16Array }).queueMax = nextQueueMax;
     (this as { battery: Float32Array }).battery = copy(this.battery, (n) => new Float32Array(n));
     const nextCharging = new Uint8Array(next);
     nextCharging.set(this.charging);
     (this as { charging: Uint8Array }).charging = nextCharging;
+    const nextTrickle = new Uint8Array(next);
+    nextTrickle.set(this.onTrickle);
+    (this as { onTrickle: Uint8Array }).onTrickle = nextTrickle;
+    (this as { chargedThisFrame: Float32Array }).chargedThisFrame =
+      copy(this.chargedThisFrame, (n) => new Float32Array(n));
     (this as { stallTime: Float32Array }).stallTime = copy(this.stallTime, (n) => new Float32Array(n));
     (this as { lastGap: Float32Array }).lastGap = copy(this.lastGap, (n) => new Float32Array(n));
     (this as { velocity: Float32Array }).velocity = copy(this.velocity, (n) => new Float32Array(n));
@@ -364,9 +398,9 @@ export class BotPool {
     };
     (this as { carryMaterial: Int8Array }).carryMaterial = growInt8(this.carryMaterial);
     (this as { carryShape: Int8Array }).carryShape = growInt8(this.carryShape);
-    const nextHauler = new Uint8Array(next);
+    const nextHauler = new Uint16Array(next);
     nextHauler.set(this.hauler);
-    (this as { hauler: Uint8Array }).hauler = nextHauler;
+    (this as { hauler: Uint16Array }).hauler = nextHauler;
     (this as { placeX: Float32Array }).placeX = copy(this.placeX, (n) => new Float32Array(n));
     (this as { placeY: Float32Array }).placeY = copy(this.placeY, (n) => new Float32Array(n));
     const nextSlot = new Int32Array(next);
@@ -384,6 +418,11 @@ export class BotPool {
   /** Charging points the fleet can draw from. Only live ones do anything. */
   setChargers(pads: ChargePad[]): void {
     this.chargers = pads;
+  }
+
+  /** Where the free trickle socket is, as a test on a machine's position. */
+  setTrickle(test: ((x: number, y: number) => boolean) | null): void {
+    this.trickle = test;
   }
 
   /** True when a robot is too flat to work. It can still crawl home. */
@@ -452,13 +491,20 @@ export class BotPool {
     return queue && queue.length > 0 ? queue[0].kind : -1;
   }
 
-  private pushOrder(index: number, order: QueuedOrder): void {
+  /** True when there is room to stack another order on this machine. */
+  canQueue(index: number): boolean {
+    return (this.queues.get(index)?.length ?? 0) < this.queueMax[index];
+  }
+
+  private pushOrder(index: number, order: QueuedOrder): boolean {
     let queue = this.queues.get(index);
     if (!queue) {
       queue = [];
       this.queues.set(index, queue);
     }
+    if (queue.length >= this.queueMax[index]) return false;
     queue.push(order);
+    return true;
   }
 
   /**
@@ -473,8 +519,7 @@ export class BotPool {
     if (!target) return false;
 
     if (append && (this.state[index] === BotState.Moving || this.isBusy(index))) {
-      this.pushOrder(index, { kind: OrderKind.Move, x: target.x, y: target.y });
-      return true;
+      return this.pushOrder(index, { kind: OrderKind.Move, x: target.x, y: target.y });
     }
 
     if (!append) {
@@ -586,10 +631,9 @@ export class BotPool {
   ): boolean {
     // The rating is fixed, so it can be judged now. Whether the deck is free
     // cannot be — a queued fetch runs after whatever unloads it.
-    if (!canLift(this.hauler[index] as HaulerClassValue, prop.material, prop.shape)) return false;
+    if (!canLift(this.hauler[index], prop.material, prop.shape)) return false;
     if (append && (this.state[index] === BotState.Moving || this.isBusy(index))) {
-      this.pushOrder(index, { kind: OrderKind.Fetch, x: prop.x, y: prop.y, prop });
-      return true;
+      return this.pushOrder(index, { kind: OrderKind.Fetch, x: prop.x, y: prop.y, prop });
     }
     this.queues.delete(index);
     this.settleGrab(index);
@@ -598,7 +642,7 @@ export class BotPool {
 
   /** Begins a fetch immediately. Does not touch the queue. */
   private startFetch(index: number, propIndex: number, prop: Prop, nav: NavGrid): boolean {
-    if (!canLift(this.hauler[index] as HaulerClassValue, prop.material, prop.shape)) return false;
+    if (!canLift(this.hauler[index], prop.material, prop.shape)) return false;
     // Flat machines can crawl about but have nothing left to work the arms.
     if (this.isFlat(index)) return false;
     if (this.carryMaterial[index] >= 0) return false;
@@ -653,8 +697,7 @@ export class BotPool {
     if (append && (this.state[index] === BotState.Moving || this.isBusy(index))) {
       // No slot is recorded: which one is free depends on what gets loaded
       // between now and then, so it is resolved when the order comes up.
-      this.pushOrder(index, { kind: OrderKind.Deliver, x, y });
-      return true;
+      return this.pushOrder(index, { kind: OrderKind.Deliver, x, y });
     }
     this.queues.delete(index);
     this.settleGrab(index);
@@ -670,8 +713,7 @@ export class BotPool {
    */
   orderCharge(index: number, pad: ChargePad, padIndex: number, nav: NavGrid, append = false): boolean {
     if (append && (this.state[index] === BotState.Moving || this.isBusy(index))) {
-      this.pushOrder(index, { kind: OrderKind.Charge, x: pad.x, y: pad.y, pad });
-      return true;
+      return this.pushOrder(index, { kind: OrderKind.Charge, x: pad.x, y: pad.y, pad });
     }
     this.queues.delete(index);
     this.settleGrab(index);
@@ -805,6 +847,8 @@ export class BotPool {
    */
   private updatePower(dt: number, drainEnabled: boolean): void {
     for (const pad of this.chargers) pad.drawing = false;
+    this.chargedThisFrame.fill(0, 0, this.count);
+    this.onTrickle.fill(0, 0, this.count);
 
     for (let i = 0; i < this.count; i++) {
       let point: ChargePad | undefined;
@@ -821,8 +865,11 @@ export class BotPool {
       if (point) {
         // Nothing flows until the coupler has actually reached the machine.
         point.drawing = this.battery[i] < 1;
+        this.onTrickle[i] = 0;
         if (point.arm > 0.94) {
+          const before = this.battery[i];
           this.battery[i] = Math.min(1, this.battery[i] + CHARGE_RATE * dt);
+          this.chargedThisFrame[i] = this.battery[i] - before;
         }
         // A machine that wandered onto a pad without being sent tidies itself
         // square anyway, so a bay never holds something sitting crooked.
@@ -838,10 +885,20 @@ export class BotPool {
         }
         continue;
       }
-      if (!drainEnabled) {
-        this.battery[i] = 1;
+      // The trickle socket: a fixture, not a purchase, and never billed. It is
+      // slow enough that living off it costs most of a shift, which is what
+      // makes the first commissioned point worth buying without anyone having
+      // to say so — and it is why a flat battery is never a dead end.
+      if (this.trickle && this.trickle(this.x[i], this.y[i])) {
+        this.onTrickle[i] = 1;
+        this.charging[i] = 1;
+        this.battery[i] = Math.min(1, this.battery[i] + CHARGE_RATE * TRICKLE_RATE * dt);
         continue;
       }
+      // Drain off means DRAIN OFF, not a free top-up. The upgrade room uses
+      // this to stop the clock on a machine standing in it, and a room that
+      // quietly refilled everything would make the whole battery pointless.
+      if (!drainEnabled) continue;
       const moving = this.velocity[i] > 8;
       let drain = DRAIN_IDLE;
       if (moving) {
@@ -1111,6 +1168,8 @@ export class BotPool {
           for (let k = 0; k < bucket.length; k++) {
             const prop = this.props[bucket[k]];
             if (grabbing && bucket[k] === this.targetProp[i]) continue;
+            // Cargo on a deck is not something to be shoved away from.
+            if (prop.onBoat) continue;
 
             // Closest point on the hull rectangle, in the robot's own frame.
             const dx = prop.x - this.x[i];

@@ -76,7 +76,10 @@ export class QuotaBoard {
   }
 
   /** Lit face and readouts, into the emissive pass so they survive the night. */
-  collectGlow(batch: SpriteBatch, bounds: Bounds, ledger: Ledger, time: number): void {
+  collectGlow(
+    batch: SpriteBatch, bounds: Bounds, ledger: Ledger, time: number,
+    shift?: { shipped: number; required: number; money: number; tab: number },
+  ): void {
     if (!boardVisible(bounds)) return;
     batch.pushRegion(
       REGIONS.quotaScreen, BOARD_RECT.x, BOARD_RECT.y, 0,
@@ -85,16 +88,21 @@ export class QuotaBoard {
 
     // Shipped runs amber until the quota is met, then settles green. A number
     // changing colour is the only "you are behind" the game ever says.
-    const met = ledger.shippedToday >= ledger.quota;
+    const shipped = shift ? shift.shipped : ledger.shippedToday;
+    const required = shift ? shift.required : ledger.quota;
+    const met = shipped >= required;
     const tint = met ? SCREEN : BEHIND;
     // A slow flicker, as if the tubes are old. Never enough to hinder reading.
     const flicker = 0.94 + 0.06 * Math.sin(time * 2.1 + Math.sin(time * 7.3) * 0.6);
 
+    this.field(batch, BOARD_FIELDS.shipped, `${shipped}/${required}`, tint, flicker);
+    // Owing shows as a negative balance: the account has to be visible, or a
+    // player wonders where the money from the last three loads went.
+    const balance = shift ? shift.money - shift.tab : ledger.revenue;
     this.field(
-      batch, BOARD_FIELDS.shipped,
-      `${ledger.shippedToday}/${ledger.quota}`, tint, flicker,
+      batch, BOARD_FIELDS.revenue,
+      (balance < 0 ? '-' : '') + money(balance), balance < 0 ? BEHIND : SCREEN, flicker,
     );
-    this.field(batch, BOARD_FIELDS.revenue, money(ledger.revenue), SCREEN, flicker);
     this.field(batch, BOARD_FIELDS.average, duration(ledger.avgSeconds), SCREEN, flicker);
   }
 

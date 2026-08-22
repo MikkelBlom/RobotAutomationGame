@@ -38,8 +38,12 @@ export interface FrameContext {
   drawGlow?: (batch: SpriteBatch, bounds: Bounds) => void;
   /** Order marks: which crates are next, and which slots they land in. */
   drawMarks?: (batch: SpriteBatch, bounds: Bounds) => void;
+  /** Surfaces other things stand on, drawn before any cargo or machine. */
+  drawUnder?: (batch: SpriteBatch, bounds: Bounds) => void;
   /** Shift figures for the board on the wall. */
   ledger?: Ledger;
+  /** The day's real standing, which supersedes the ledger's own counters. */
+  shift?: { shipped: number; required: number; money: number; tab: number };
   drawOverlay?: (batch: SpriteBatch, bounds: Bounds) => void;
 }
 
@@ -226,6 +230,9 @@ export class Renderer {
     this.entityBatch.begin();
     pass?.collectColumns(this.entityBatch, bounds, ctx.settings);
     pass?.collectChargers(this.entityBatch, bounds);
+    // Ground-level structures first: a boat's hull and the shop floor are
+    // things other objects stand ON, so anything drawn after them sits on top.
+    ctx.drawUnder?.(this.entityBatch, bounds);
     pass?.collectProps(this.entityBatch, bounds, ctx.settings);
     this.board.collect(this.entityBatch, bounds);
     if (ctx.trailers) {
@@ -292,7 +299,7 @@ export class Renderer {
     // --------------------------------------------------------------- 4. glow
     applyBlend(gl, BlendMode.Additive);
     this.glowBatch.begin();
-    if (ctx.ledger) this.board.collectGlow(this.glowBatch, bounds, ctx.ledger, ctx.time);
+    if (ctx.ledger) this.board.collectGlow(this.glowBatch, bounds, ctx.ledger, ctx.time, ctx.shift);
     pass?.collectChargerGlow(this.glowBatch, bounds, ctx.time);
     if (ctx.trailers) pass?.collectPlateGlow(this.glowBatch, ctx.trailers, bounds, ctx.time);
     ctx.drawGlow?.(this.glowBatch, bounds);
