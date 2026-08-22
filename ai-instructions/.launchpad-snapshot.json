@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-22T01:57:48.319Z",
+  "generatedAt": "2026-08-22T02:15:05.229Z",
   "project": {
     "id": 31,
     "name": "RobotAutomationGame",
@@ -11,6 +11,29 @@
     "activity": "fresh"
   },
   "notes": [
+    {
+      "id": 151,
+      "title": "Electricity: how it costs money and still cannot strand you",
+      "body": "THE PROBLEM\nCharging costs money. A player with no money and no charge cannot earn, and\ncannot charge. That is a hard lock, and an incremental must not have one.\n\nTHE ANSWER — two parts that compose\n\n1. THE TRICKLE SOCKET. A fixture, not a purchase: a slow mains point that is\n   always free. It charges at roughly a fifth of a proper pad. It cannot strand\n   you because it is always there and never billed — but it costs the one thing\n   that is genuinely scarce in a day-based game, which is TIME. Standing at it\n   eats the working day.\n\n   This is also what makes the first purchase obviously worth making. The\n   player does not need telling that a charge point is good; they can feel half\n   their day going into the wall socket.\n\n2. A TAB. Every commissioned pad bills by the unit drawn. If the money is not\n   there, the charge still happens and the balance goes on account. Income\n   clears the balance before it becomes profit.\n\n   This is better than waiving the charge when broke, which sounds equivalent\n   but is exploitable — a player who always spends to zero before charging gets\n   free power forever. A tab is not exploitable, never refuses service, and is\n   self-correcting: power is 10-20% of what a crate earns, so any productive\n   work pays it down. The only way to grow the debt is to drive about not\n   working, which is the player's choice and fixes itself the moment they stop.\n\nWHY THIS IS WORTH THE COMPLEXITY\n\nIt is one meter for the whole game. The factory's electricity demand later\nbills to the same account, as does anything else that draws power. Running the\nplace on credit is also a real thing that happens to real businesses, so it\nneeds no explaining, and it opens a whole later line — interest, credit limits,\npaying the tab down for a reputation bonus — without inventing a new system.\n\nWHAT THIS REPLACES\nThe earlier 'bill only when the money exists' rule. Same guarantee, no exploit.",
+      "pinned": true,
+      "updatedAt": "2026-08-22T02:15:04.056Z",
+      "tags": [
+        "decisions",
+        "design",
+        "power"
+      ]
+    },
+    {
+      "id": 150,
+      "title": "Upgrade rules — levels, pricing, and how the axes extend",
+      "body": "LEVEL COUNTS\n\n· Per-bot upgrades: 1-5 levels each, no more. Every level costs a trip to the\n  shop with that specific bot, and that trip is the real price. A twenty-level\n  per-bot upgrade would be twenty drives.\n· Global upgrades: 25-100 levels. These are bought from anywhere in the shop,\n  cost nothing but money, and are where the long tail of progression lives.\n\nPRICING\n\nNothing maxes out in the phase that introduces it. Price curves are set so a\nline stays worth buying into for a phase or two afterwards, which means at any\nmoment the player has more things worth buying than money to buy them with.\nThat is the choice: not which upgrades are available, but which order to take\nthem in. Nothing is ever locked out by taking another first.\n\nTHE TWO AXES MUST BE OPEN-ENDED\n\nMore sizes and more weight classes are coming, so neither axis can be a closed\nenum of the three and two that exist now.\n\n· SIZE as deck capacity in crate units: 1, 2, 4, ... A bot's deck holds a set of\n  crates that fit. 'Can it take a 2x2' becomes 'does 4 units fit', and vertical\n  extension later is just more units.\n· WEIGHT as a rating compared against a crate's own weight class: timber 1,\n  steel 2, and whatever comes after at 3, 4. A bot lifts anything rated at or\n  below its own.\n\nWritten this way, adding a size or a material is data, not a code change.\n\nWITHDRAWN FROM THE CATALOGUE\n\n· 13 Twin deck — folded into SIZE. Vertical stacking is a later size step, not\n  a separate upgrade that would fight it.\n· 19 Loop orders — makes no sense once auto-pickup and auto-deliver exist. Its\n  real home is the factory phase, and probably a different chassis: a bot whose\n  job is a fixed circuit between machines rather than one that chooses work.\n· 78 Battery health — only exists if capacity decays, and adding decay purely to\n  sell the cure is a bad trade.",
+      "pinned": true,
+      "updatedAt": "2026-08-22T02:15:04.055Z",
+      "tags": [
+        "design",
+        "upgrades"
+      ]
+    },
     {
       "id": 141,
       "title": "Intro phase — spec",
@@ -233,19 +256,6 @@
       ]
     },
     {
-      "id": 396,
-      "title": "Two-axis hauler capability: size and weight, both per-bot",
-      "body": "DECIDED: two independent, stacking axes, replacing the single\nHaulerClass enum.\n\n· Size: 1x1 -> 1x2 (or two 1x1) -> 2x2 (or two 1x2, or four 1x1)\n· Weight: timber -> steel\n\nFixes a live bug as a side effect: steel 1x2 and steel 2x2 are currently\nliftable by nothing, because liftRefusal in src/sim/cargo.ts demands Heavy for\nthe material AND Long-or-Big for the shape, and no single class is both.\n\nSteel is the most expensive line and should stay out of reach longest, but a\n1x1 heavy hauler must be a legal build — the axes are independent, not a ladder.\n\nDeck capacity by size also needs modelling: a bot is not carrying 'a crate' any\nmore, it is carrying a set of crates that fit its deck.",
-      "status": "todo",
-      "priority": "high",
-      "dueDate": null,
-      "updatedAt": "2026-08-22T01:57:47.243Z",
-      "tags": [
-        "bug",
-        "design"
-      ]
-    },
-    {
       "id": 397,
       "title": "No-lock guarantees: reserve floor, held boat, unbillable charge",
       "body": "There is no game over. Implement the three guarantees from the no-lock\nnote:\n\n1. A bot never reaches zero charge — it keeps a reserve that still allows the\n   low-power crawl. Lifting is still refused in low power.\n2. No boat arrives until the first charge point is bought.\n3. Charging is billed only when the money exists; when it does not, the charge\n   still happens and the meter does not run.\n\nMissing a quota costs money or reputation, never the run.",
@@ -269,6 +279,31 @@
       "tags": [
         "design",
         "upgrades"
+      ]
+    },
+    {
+      "id": 399,
+      "title": "Capability as open-ended numbers, not enums",
+      "body": "More sizes and weight classes are coming. Model both axes as numbers so\nadding one is data rather than a code change.\n\n· Size = deck capacity in crate units (1, 2, 4, ...). A deck holds a SET of\n  crates that fit, not 'a crate'.\n· Weight = a rating; a crate carries its own weight class. Lift if bot >= crate.\n\nSupersedes the three-size, two-material enum in src/sim/cargo.ts.",
+      "status": "todo",
+      "priority": "high",
+      "dueDate": null,
+      "updatedAt": "2026-08-22T02:15:04.052Z",
+      "tags": [
+        "design"
+      ]
+    },
+    {
+      "id": 400,
+      "title": "Power billing: trickle socket, metered pads, and a tab",
+      "body": "Implements the no-lock answer.\n\n· A free trickle socket as a permanent fixture, about a fifth of a pad's rate.\n  Always available, never billed. Costs the player time rather than money, and\n  is what makes the first charge point obviously worth buying.\n· Commissioned pads bill by the unit drawn.\n· When the money is not there the charge still happens and the balance goes on\n  a tab. Income clears the tab before it becomes profit.\n\nOne meter for the whole game — the factory bills to the same account later.",
+      "status": "todo",
+      "priority": "high",
+      "dueDate": null,
+      "updatedAt": "2026-08-22T02:15:04.054Z",
+      "tags": [
+        "design",
+        "power"
       ]
     }
   ]
